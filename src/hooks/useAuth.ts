@@ -11,6 +11,8 @@ interface AuthState {
   error: string | null;
 }
 
+const OWNER_EMAIL = import.meta.env.VITE_ADMIN_EMAIL as string | undefined;
+
 async function resolveAdminUser(user: User): Promise<AdminUser | null> {
   // Önce adminUsers koleksiyonuna bak (mevcut adminler)
   const adminRef = doc(db, 'adminUsers', user.uid);
@@ -18,9 +20,25 @@ async function resolveAdminUser(user: User): Promise<AdminUser | null> {
 
   if (adminSnap.exists()) {
     const data = adminSnap.data() as AdminUser;
-    // lastLoginAt güncelle
-    await updateDoc(adminRef, { lastLoginAt: new Date().toISOString() });
-    return { ...data, lastLoginAt: new Date().toISOString() };
+    // Eski kayıtlarda isActive olmayabilir — varsayılan true
+    const adminUser: AdminUser = { isActive: true, ...data, lastLoginAt: new Date().toISOString() };
+    await updateDoc(adminRef, { lastLoginAt: new Date().toISOString(), isActive: adminUser.isActive });
+    return adminUser;
+  }
+
+  // VITE_ADMIN_EMAIL ile giriş yapan kullanıcıyı otomatik owner yap
+  if (OWNER_EMAIL && user.email === OWNER_EMAIL) {
+    const adminUser: AdminUser = {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName ?? undefined,
+      role: 'owner',
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    };
+    await setDoc(adminRef, adminUser);
+    return adminUser;
   }
 
   // Sonra users koleksiyonuna bak — isAdmin: true olan KurdîGo kullanıcıları
