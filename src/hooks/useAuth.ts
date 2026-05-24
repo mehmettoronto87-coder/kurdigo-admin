@@ -1,16 +1,51 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase/config';
-import type { AdminUser } from '../types/admin';
-
-const ALLOWED_EMAIL = import.meta.env.VITE_ADMIN_EMAIL as string;
+import type { AdminUser, AdminRole } from '../types/admin';
 
 interface AuthState {
   user: User | null;
   adminUser: AdminUser | null;
   loading: boolean;
   error: string | null;
+}
+
+async function resolveAdminUser(user: User): Promise<AdminUser | null> {
+  // Önce adminUsers koleksiyonuna bak (mevcut adminler)
+  const adminRef = doc(db, 'adminUsers', user.uid);
+  const adminSnap = await getDoc(adminRef);
+
+  if (adminSnap.exists()) {
+    const data = adminSnap.data() as AdminUser;
+    // lastLoginAt güncelle
+    await updateDoc(adminRef, { lastLoginAt: new Date().toISOString() });
+    return { ...data, lastLoginAt: new Date().toISOString() };
+  }
+
+  // Sonra users koleksiyonuna bak — isAdmin: true olan KurdîGo kullanıcıları
+  const userRef = doc(db, 'users', user.uid);
+  const userSnap = await getDoc(userRef);
+
+  if (userSnap.exists()) {
+    const userData = userSnap.data();
+    if (userData.isAdmin === true) {
+      const role: AdminRole = userData.adminRole ?? 'content_editor';
+      const adminUser: AdminUser = {
+        uid: user.uid,
+        email: user.email!,
+        displayName: user.displayName ?? userData.name ?? undefined,
+        role,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        lastLoginAt: new Date().toISOString(),
+      };
+      await setDoc(adminRef, adminUser);
+      return adminUser;
+    }
+  }
+
+  return null;
 }
 
 export function useAuth() {
@@ -28,28 +63,19 @@ export function useAuth() {
         return;
       }
 
-      if (user.email !== ALLOWED_EMAIL) {
-        await signOut(auth);
-        setState({ user: null, adminUser: null, loading: false, error: 'Bu hesabın admin erişimi yok.' });
-        return;
-      }
-
       try {
-        const adminRef = doc(db, 'adminUsers', user.uid);
-        const snap = await getDoc(adminRef);
+        const adminUser = await resolveAdminUser(user);
 
-        let adminUser: AdminUser;
-        if (snap.exists()) {
-          adminUser = snap.data() as AdminUser;
-        } else {
-          adminUser = {
-            uid: user.uid,
-            email: user.email!,
-            displayName: user.displayName ?? undefined,
-            role: 'owner',
-            createdAt: new Date().toISOString(),
-          };
-          await setDoc(adminRef, adminUser);
+        if (!adminUser) {
+          await signOut(auth);
+          setState({ user: null, adminUser: null, loading: false, error: 'Bu hesabın admin erişimi yok.' });
+          return;
+        }
+
+        if (!adminUser.isActive) {
+          await signOut(auth);
+          setState({ user: null, adminUser: null, loading: false, error: 'Hesabınız devre dışı bırakılmış.' });
+          return;
         }
 
         setState({ user, adminUser, loading: false, error: null });

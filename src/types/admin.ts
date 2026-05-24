@@ -3,10 +3,10 @@ import type { CurriculumMediaItem, CurriculumLessonStep, CurriculumLessonType } 
 export type LessonStatus = 'draft' | 'approved' | 'production' | 'live';
 
 export interface AdminLesson {
-  id: string;           // Firestore doc ID
+  id: string;
   unitId: string;
-  lessonOrder: number;  // 1-5
-  title: string;        // Kürtçe başlık
+  lessonOrder: number;
+  title: string;
   titleTr?: string;
   titleEn?: string;
   lessonType: CurriculumLessonType;
@@ -15,10 +15,10 @@ export interface AdminLesson {
   steps: CurriculumLessonStep[];
   lockedStepIds: string[];
   reviewItemIds: string[];
-  externalDistractorItemIds?: string[]; // önceki derslerden sadece yanlış şık havuzu; yeni kart/medya üretme
+  externalDistractorItemIds?: string[];
   culturalFocusTags: string[];
   reviewNotes?: string;
-  createdAt: string;   // ISO string (Firestore Timestamp serileştirme)
+  createdAt: string;
   updatedAt: string;
   createdBy: string;
   approvedBy?: string;
@@ -36,19 +36,18 @@ export interface ChangeRecord {
   description: string;
 }
 
-// Ortam Kütüphanesi — Görsel varlıklar
 export type AssetStatus = 'placeholder' | 'generating' | 'generated' | 'uploaded' | 'active';
 
 export interface AffordanceAnswer {
-  tagId: string;       // action:greeting
-  category: string;    // action
-  ku: string;          // silav dike
-  tr: string;          // selamlıyor
-  en?: string;         // greets
+  tagId: string;
+  category: string;
+  ku: string;
+  tr: string;
+  en?: string;
 }
 
 export interface SceneAsset {
-  id: string;          // Firestore doc ID (= mediaId)
+  id: string;
   mediaId: string;
   unitId: string;
   lessonId: string;
@@ -57,11 +56,11 @@ export interface SceneAsset {
   primaryTr: string;
   primaryEn?: string;
   emoji: string;
-  storageUrl?: string;       // Firebase Storage — görsel URL
+  storageUrl?: string;
   storagePath?: string;
-  audioUrl?: string;         // Firebase Storage — ses URL (kullanıcı kaydı)
+  audioUrl?: string;
   audioStoragePath?: string;
-  audioStatus: AudioStatus;  // Ses dosyası durumu
+  audioStatus: AudioStatus;
   tags: string[];
   visualAffordanceTags: string[];
   affordanceAnswers: AffordanceAnswer[];
@@ -75,7 +74,6 @@ export interface SceneAsset {
 
 export type AudioStatus = 'missing' | 'recording_needed' | 'uploaded' | 'verified';
 
-// Ders medya üretim durumu (görsel + ses, kelime bazında)
 export type ImageGenStatus = 'pending' | 'generating' | 'generated' | 'approved' | 'rejected';
 export type AudioItemStatus = 'missing' | 'uploading' | 'uploaded' | 'verified';
 
@@ -88,25 +86,111 @@ export interface ItemMediaStatus {
   audioStatus: AudioItemStatus;
 }
 
-// Admin kullanıcı rolleri
-export type AdminRole = 'owner' | 'editor';
+// ─── Rol sistemi ────────────────────────────────────────────────────────────
+
+export type AdminRole =
+  | 'owner'           // Tam yetki (sen)
+  | 'content_editor'  // AI üretim, müfredat
+  | 'social_media'    // Sosyal medya paneli
+  | 'advertising'     // Reklam paneli
+  | 'accounting'      // Muhasebe paneli
+  | 'support_agent';  // Destek talepleri
+
+export const ROLE_LABELS: Record<AdminRole, string> = {
+  owner:          '👑 Sahip',
+  content_editor: '✏️ İçerik Editörü',
+  social_media:   '📱 Sosyal Medya',
+  advertising:    '📣 Reklam',
+  accounting:     '💰 Muhasebe',
+  support_agent:  '🎧 Destek',
+};
+
+export const ROLE_PANELS: Record<AdminRole, string[]> = {
+  owner:          ['dashboard', 'curriculum', 'ai-generator', 'scene-library', 'social-media', 'advertising', 'accounting', 'support', 'team', 'settings'],
+  content_editor: ['dashboard', 'curriculum', 'ai-generator', 'scene-library', 'team'],
+  social_media:   ['social-media', 'team'],
+  advertising:    ['advertising', 'team'],
+  accounting:     ['accounting', 'team'],
+  support_agent:  ['support', 'team'],
+};
 
 export interface AdminUser {
   uid: string;
   email: string;
   displayName?: string;
+  photoURL?: string;
   role: AdminRole;
+  isActive: boolean;
   createdAt: string;
   lastLoginAt?: string;
 }
 
-// AI üretim isteği
+// ─── Destek Talepleri ────────────────────────────────────────────────────────
+
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type TicketPriority = 'low' | 'medium' | 'high';
+
+export interface TicketReply {
+  uid: string;
+  displayName: string;
+  text: string;
+  createdAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  userId: string;
+  userEmail: string;
+  userName: string;
+  subject: string;
+  message: string;
+  status: TicketStatus;
+  priority: TicketPriority;
+  assignedTo?: string;
+  assignedName?: string;
+  replies: TicketReply[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── İç Mesajlaşma ──────────────────────────────────────────────────────────
+
+export interface AdminMessage {
+  id: string;
+  authorUid: string;
+  authorName: string;
+  authorRole: AdminRole;
+  text: string;
+  mentions: string[];
+  createdAt: string;
+}
+
+// ─── Görev ──────────────────────────────────────────────────────────────────
+
+export type TaskStatus = 'todo' | 'doing' | 'done';
+
+export interface AdminTask {
+  id: string;
+  title: string;
+  description?: string;
+  assignedTo: string;
+  assignedName: string;
+  createdBy: string;
+  createdByName: string;
+  status: TaskStatus;
+  dueDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ─── Mevcut tipler ──────────────────────────────────────────────────────────
+
 export interface AIGenerationRequest {
   unitId: string;
   lessonOrder: number;
-  lessonTitle?: string; // opsiyonel geçersiz kılma
-  focusVocabulary?: string[]; // bu derste yeni öğretilecek kelimeler
-  reviewItems?: ReviewItemContext[]; // önceki derslerden seçilen tekrar item'ları
+  lessonTitle?: string;
+  focusVocabulary?: string[];
+  reviewItems?: ReviewItemContext[];
   previousLessonsContext?: PreviousLessonContext[];
   additionalInstructions?: string;
 }
@@ -134,11 +218,9 @@ export interface ReviewItemContext {
   media?: ItemMediaStatus;
 }
 
-// UI durum tipleri
 export type EditorTab = 'items' | 'steps' | 'preview';
 export type SidebarSection = 'curriculum' | 'scene-library' | 'dashboard' | 'settings';
 
-// Çakışma uyarısı
 export interface ConflictWarning {
   type: 'duplicate_image' | 'overused_word' | 'missing_review' | 'invalid_distractor';
   stepId: string;
@@ -147,7 +229,6 @@ export interface ConflictWarning {
   severity: 'error' | 'warning' | 'info';
 }
 
-// Frekans takip
 export interface VocabFrequencyEntry {
   itemId: string;
   ku: string;
