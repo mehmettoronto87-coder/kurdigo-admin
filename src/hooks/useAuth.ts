@@ -13,22 +13,19 @@ interface AuthState {
 
 const OWNER_EMAIL = import.meta.env.VITE_ADMIN_EMAIL as string | undefined;
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+}
+
 async function resolveAdminUser(user: User): Promise<AdminUser | null> {
-  // Önce adminUsers koleksiyonuna bak (mevcut adminler)
   const adminRef = doc(db, 'adminUsers', user.uid);
-  const adminSnap = await getDoc(adminRef);
 
-  if (adminSnap.exists()) {
-    const data = adminSnap.data() as AdminUser;
-    // Eski kayıtlarda isActive olmayabilir — varsayılan true
-    const adminUser: AdminUser = { isActive: true, ...data, lastLoginAt: new Date().toISOString() };
-    await updateDoc(adminRef, { lastLoginAt: new Date().toISOString(), isActive: adminUser.isActive });
-    return adminUser;
-  }
-
-  // VITE_ADMIN_EMAIL ile giriş yapan kullanıcıyı otomatik owner yap
+  // VITE_ADMIN_EMAIL ile giriş yapan kullanıcıyı hemen owner say (Firestore okumadan önce)
   if (OWNER_EMAIL && user.email === OWNER_EMAIL) {
-    const adminUser: AdminUser = {
+    const baseAdmin: AdminUser = {
       uid: user.uid,
       email: user.email,
       displayName: user.displayName ?? undefined,
@@ -37,30 +34,59 @@ async function resolveAdminUser(user: User): Promise<AdminUser | null> {
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),
     };
-    await setDoc(adminRef, adminUser);
-    return adminUser;
+
+    // Firestore'a kaydet — hata olsa bile girişi engelleme
+    try {
+      const adminSnap = await withTimeout(getDoc(adminRef), 5000);
+      if (adminSnap.exists()) {
+        const existing = adminSnap.data() as AdminUser;
+        const merged: AdminUser = { isActive: true, ...existing, lastLoginAt: new Date().toISOString() };
+        updateDoc(adminRef, { lastLoginAt: merged.lastLoginAt, isActive: true }).catch(() => {});
+        return merged;
+      }
+      setDoc(adminRef, baseAdmin).catch(() => {});
+    } catch {
+      // Firestore erişilemese bile owner'ı içeri al
+    }
+    return baseAdmin;
   }
 
-  // Sonra users koleksiyonuna bak — isAdmin: true olan KurdîGo kullanıcıları
-  const userRef = doc(db, 'users', user.uid);
-  const userSnap = await getDoc(userRef);
-
-  if (userSnap.exists()) {
-    const userData = userSnap.data();
-    if (userData.isAdmin === true) {
-      const role: AdminRole = userData.adminRole ?? 'content_editor';
-      const adminUser: AdminUser = {
-        uid: user.uid,
-        email: user.email!,
-        displayName: user.displayName ?? userData.name ?? undefined,
-        role,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        lastLoginAt: new Date().toISOString(),
-      };
-      await setDoc(adminRef, adminUser);
+  // Diğer kullanıcılar için adminUsers koleksiyonunu kontrol et
+  try {
+    const adminSnap = await withTimeout(getDoc(adminRef), 5000);
+    if (adminSnap.exists()) {
+      const data = adminSnap.data() as AdminUser;
+      const adminUser: AdminUser = { isActive: true, ...data, lastLoginAt: new Date().toISOString() };
+      updateDoc(adminRef, { lastLoginAt: new Date().toISOString(), isActive: adminUser.isActive }).catch(() => {});
       return adminUser;
     }
+  } catch {
+    return null;
+  }
+
+  // users koleksiyonunda isAdmin: true kontrolü
+  try {
+    const userRef = doc(db, 'users', user.uid);
+    const userSnap = await withTimeout(getDoc(userRef), 5000);
+    if (userSnap.exists()) {
+      const userData = userSnap.data();
+      if (userData.isAdmin === true) {
+        const role: AdminRole = userData.adminRole ?? 'content_editor';
+        const adminUser: AdminUser = {
+          uid: user.uid,
+          email: user.email!,
+          displayName: user.displayName ?? userData.name ?? undefined,
+          role,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
+        };
+        setDoc(adminRef, adminUser).catch(() => {});
+        return adminUser;
+      }
+    }
+  } catch {
+    return null;
   }
 
   return null;
