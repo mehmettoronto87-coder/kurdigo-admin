@@ -182,6 +182,29 @@ export async function updateTaskStatus(taskId: string, status: TaskStatus): Prom
 
 export type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'youtube' | 'linkedin';
 export type PostStatus = 'idea' | 'draft' | 'review' | 'approved' | 'scheduled' | 'published';
+export type PostCategory = 'education' | 'promotion' | 'story' | 'reel' | 'meme' | 'announcement' | 'engagement' | 'behind_scenes';
+
+export const POST_CATEGORY_LABELS: Record<PostCategory, string> = {
+  education:     '📚 Eğitim',
+  promotion:     '📣 Tanıtım',
+  story:         '📖 Hikaye',
+  reel:          '🎬 Reel/Video',
+  meme:          '😄 Meme',
+  announcement:  '📢 Duyuru',
+  engagement:    '💬 Etkileşim',
+  behind_scenes: '🎥 Sahne Arkası',
+};
+
+export interface PostPerformance {
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  views?: number;
+  reach?: number;
+  saves?: number;
+  clicks?: number;
+  loggedAt?: string;
+}
 
 export interface SocialPost {
   id: string;
@@ -189,6 +212,7 @@ export interface SocialPost {
   caption: string;
   platforms: SocialPlatform[];
   status: PostStatus;
+  category?: PostCategory;
   mediaUrls: string[];
   hashtags: string[];
   scheduledAt?: string;
@@ -200,6 +224,7 @@ export interface SocialPost {
   approvedBy?: string;
   approvedByName?: string;
   notes?: string;
+  performance?: PostPerformance;
   createdAt: string;
   updatedAt: string;
 }
@@ -235,4 +260,11 @@ export async function updateSocialPost(id: string, changes: Partial<SocialPost>)
 export async function deleteSocialPost(id: string): Promise<void> {
   const { deleteDoc } = await import('firebase/firestore');
   await deleteDoc(doc(db, 'socialPosts', id));
+}
+
+export async function logPostPerformance(id: string, performance: PostPerformance): Promise<void> {
+  await updateDoc(doc(db, 'socialPosts', id), {
+    performance: { ...performance, loggedAt: new Date().toISOString() },
+    updatedAt: serverTimestamp(),
+  });
 }
