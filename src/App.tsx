@@ -13,6 +13,7 @@ import TeamPage from './pages/TeamPage';
 import SupportPage from './pages/SupportPage';
 import MessagesPage from './pages/MessagesPage';
 import ComingSoonPage from './pages/ComingSoonPage';
+import SocialMediaPage from './pages/SocialMediaPage';
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -47,7 +48,7 @@ export default function App() {
                   {allowed.includes('scene-library') && <Route path="/scene-library" element={<SceneLibraryPage />} />}
 
                   {/* Operasyon */}
-                  {allowed.includes('social-media') && <Route path="/social-media" element={<ComingSoonPage title="Sosyal Medya" icon="📱" />} />}
+                  {allowed.includes('social-media') && <Route path="/social-media" element={<SocialMediaPage />} />}
                   {allowed.includes('advertising') && <Route path="/advertising" element={<ComingSoonPage title="Reklam Yönetimi" icon="📣" />} />}
                   {allowed.includes('accounting') && <Route path="/accounting" element={<ComingSoonPage title="Muhasebe" icon="💰" />} />}
                   {allowed.includes('support') && <Route path="/support" element={<SupportPage />} />}
