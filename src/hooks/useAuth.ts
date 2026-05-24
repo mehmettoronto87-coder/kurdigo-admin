@@ -51,7 +51,7 @@ async function resolveAdminUser(user: User): Promise<AdminUser | null> {
     return baseAdmin;
   }
 
-  // Diğer kullanıcılar için adminUsers koleksiyonunu kontrol et
+  // Diğer kullanıcılar için adminUsers koleksiyonunu kontrol et (UID ile)
   try {
     const adminSnap = await withTimeout(getDoc(adminRef), 5000);
     if (adminSnap.exists()) {
@@ -62,6 +62,24 @@ async function resolveAdminUser(user: User): Promise<AdminUser | null> {
     }
   } catch {
     return null;
+  }
+
+  // Email ile önceden davet edilmiş pending kayıt kontrolü
+  if (user.email) {
+    try {
+      const { collection, query, where, limit: fsLimit, getDocs } = await import('firebase/firestore');
+      const pendingSnap = await withTimeout(
+        getDocs(query(collection(db, 'adminUsers'), where('email', '==', user.email), fsLimit(1))),
+        5000,
+      );
+      if (!pendingSnap.empty) {
+        const data = pendingSnap.docs[0].data() as AdminUser;
+        const adminUser: AdminUser = { isActive: true, ...data, uid: user.uid, lastLoginAt: new Date().toISOString() };
+        // Pending kaydı gerçek UID ile güncelle
+        setDoc(adminRef, adminUser).catch(() => {});
+        return adminUser;
+      }
+    } catch { /* devam et */ }
   }
 
   // users koleksiyonunda isAdmin: true kontrolü
