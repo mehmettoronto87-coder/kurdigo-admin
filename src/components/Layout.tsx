@@ -29,6 +29,7 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
       { path: '/curriculum', label: 'Müfredat', icon: '📚', panel: 'curriculum' },
       { path: '/ai-generator', label: 'AI Üretici', icon: '🤖', panel: 'ai-generator' },
       { path: '/scene-library', label: 'Ortam Kütüphanesi', icon: '🖼️', panel: 'scene-library' },
+      { path: '/vocab-image-pipeline', label: 'Görsel Pipeline', icon: '🎨', panel: 'scene-library' },
     ],
   },
   {

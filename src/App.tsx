@@ -8,6 +8,7 @@ import CurriculumPage from './pages/CurriculumPage';
 import LessonEditorPage from './pages/LessonEditorPage';
 import AIGeneratorPage from './pages/AIGeneratorPage';
 import SceneLibraryPage from './pages/SceneLibraryPage';
+import VocabImagePipelinePage from './pages/VocabImagePipelinePage';
 import SettingsPage from './pages/SettingsPage';
 import TeamPage from './pages/TeamPage';
 import SupportPage from './pages/SupportPage';
@@ -46,6 +47,7 @@ export default function App() {
                   {allowed.includes('curriculum') && <Route path="/curriculum/:unitId" element={<LessonEditorPage />} />}
                   {allowed.includes('ai-generator') && <Route path="/ai-generator" element={<AIGeneratorPage />} />}
                   {allowed.includes('scene-library') && <Route path="/scene-library" element={<SceneLibraryPage />} />}
+                  {allowed.includes('scene-library') && <Route path="/vocab-image-pipeline" element={<VocabImagePipelinePage />} />}
 
                   {/* Operasyon */}
                   {allowed.includes('social-media') && <Route path="/social-media" element={<SocialMediaPage />} />}

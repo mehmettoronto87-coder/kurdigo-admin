@@ -44,7 +44,7 @@ export const UNITS: UnitData[] = [
       { title: 'Silavên Bingehîn', words: ['silav', 'spas', 'belê', 'na', 'rojbaş', 'şevbaş', 'roj', 'şev'] },
       { title: 'Tu çawa yî?', words: ['tu çawa yî', 'ez baş im', 'nexweş', 'ez', 'tu', 'ew', 'baş', 'spas'] },
       { title: 'Nav û nasname', words: ['nav', 'ez ... im', 'tu kî yî', 'ev', 'ew', 'kî', 'çi', 'ku'] },
-      { title: 'Xatirê te', words: ['xatirê te', 'oxir be', 'bi xêr be', 'xweşî bimîne', 'şev baş', 'roj baş', 'êvar baş', 'sibeh baş'] },
+      { title: 'Xatirê te', words: ['xatirê te', 'oxir be', 'bi xêr be', 'xweşî bimîne', 'şevbaş', 'rojbaş', 'êvarbaş', 'sibehbaş'] },
       { title: 'Ji ku yî?', words: ['ji ku yî', 'ez ji ... im', 'welat', 'bajar', 'Kurdistan', 'Tirkiye', 'Sûriye', 'gund'] },
     ],
   },
