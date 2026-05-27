@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { getProjectSettings } from './projectSettings';
 
 type TextJsonArgs = {
   system: string;
@@ -58,10 +59,15 @@ export async function generateImageAsset(prompt: string): Promise<ImageAsset> {
   const apiKey = envValue(import.meta.env.VITE_OPENAI_API_KEY);
   if (!apiKey || apiKey === 'sk-...') throw new Error('VITE_OPENAI_API_KEY tanımlı değil.');
 
+  const settings = await getProjectSettings().catch(() => ({ imageBrief: '', textQualityRules: '' }));
+  const fullPrompt = settings.imageBrief
+    ? `${settings.imageBrief}\n\n---\n\n${prompt}`
+    : prompt;
+
   const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
   const resp = await openai.images.generate({
     model: envValue(import.meta.env.VITE_OPENAI_IMAGE_MODEL) || 'gpt-image-1',
-    prompt,
+    prompt: fullPrompt,
     n: 1,
     size: '1024x1024',
     quality: 'medium',

@@ -2,6 +2,7 @@ import type { AIGenerationRequest, AdminLesson, PreviousLessonContext } from '..
 import type { CurriculumMediaItem, CurriculumLessonStep } from '../types/curriculum';
 import { UNITS, LEVELS } from './curriculumData';
 import { generateTextJson, getTextProviderLabel } from './aiProviders';
+import { getProjectSettings } from './projectSettings';
 
 function unitOrderOf(unitId: string): number {
   return UNITS.find(u => u.id === unitId)?.order ?? 0;
@@ -13,7 +14,7 @@ function globalLessonOrder(unitId: string, lessonOrder: number): number {
 
 // ========== SİSTEM PROMPTU ==========
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(projectTextRules?: string): string {
   return `
 Sen KurdîGo uygulaması için Kurmanci Kürtçe dil öğrenme dersleri üreten bir uzman içerik yazarısın.
 Türkçe VE İngilizce bilen Kürtçe öğrenciler için A1 seviyesinden başlayarak ders üretiyorsun.
@@ -443,6 +444,66 @@ Sadece geçerli JSON döndür. Başka HİÇBİR ŞEY yazma.
     },
   ]
 }
+
+═══════════════════════════════════════════
+DOĞRULANMIŞ KURMANCİ A1 SÖZLÜĞÜ — MUTLAK REFERANS
+═══════════════════════════════════════════
+
+Bu kelimeleri kullanacaksan YALNIZCA aşağıdaki doğrulanmış formları kullan.
+Sözlükteki kelimeyi değiştirme, tahmin etme, Türkçeden calque yapma.
+
+SELAMLAMA: silav=Merhaba | rojbaş=Günaydın | şevbaş=İyi geceler | supas/spas=Teşekkürler
+  gelek spas=Çok teşekkürler | belê=Evet | erê=Evet(onay) | na=Hayır | baş=İyi/güzel
+  nexweş=Hasta | xweş=Güzel | xatirê te=Hoşça kal | bi xêr hatî=Hoş geldin
+
+ZAMİRLER: ez=Ben | tu=Sen | ew=O | em=Biz | hûn=Siz | ew(çoğul)=Onlar
+  min=Benim | te=Senin | wî/wê=Onun | me=Bizim | we=Sizin
+
+FİİLLER: bûn=olmak | xwarin=yemek | vexwarin=içmek | çûn=gitmek | hatin=gelmek
+  kirin=yapmak | dîtin=görmek | zanîn=bilmek | xwendin=okumak | lîstin=oynamak
+  razan=uyumak | rabûn=kalkmak | ketin=düşmek | girtin=tutmak | vedan=açmak
+
+SAYILAR: yek=1 | du=2 | sê=3 | çar=4 | pênc=5 | şeş=6 | heft=7 | heşt=8 | neh=9 | deh=10 | bîst=20 | sed=100
+
+RENKLER: sor=kırmızı | kesk=yeşil | şîn=mavi | zer=sarı | spî=beyaz | reş=siyah | mor=mor | qehweyî=kahverengi | gewr=gri
+
+NESNELER: pirtûk=kitap | mal/xane=ev | derî=kapı | mase=masa | kursî=sandalye | av=su | nan=ekmek
+  çay=çay | dest=el | serî=baş | çav=göz | guh=kulak | dev=ağız | pê=ayak | ziman=dil
+
+AİLE: dê=anne | bav=baba | bira=erkek kardeş | xwişk=kız kardeş | malbat=aile
+  apê=amca/dayı | metê=hala/teyze | bapîr=büyükbaba | dapîr=büyükanne
+
+HAYVANLAR: seg=köpek | pisîk=kedi | hesp=at | çêlek=inek | mirîşk=tavuk | masî=balık | çûk=kuş | rovî=tilki
+
+YER: li='-de' yer belirteci | li malê=evde | li dibistanê=okulda | jor=yukarı | xwarê=aşağı
+  pêş=önde | paş=arkada | çep=sol | rast=sağ | li nêzîk=yakında | li dûr=uzakta
+
+ZAMAN: roj=gün | şev=gece | sibê=sabah | êvar=akşam | îro=bugün | sibê(zarf)=yarın | duh=dün | meh=ay | sal=yıl
+
+═══════════════════════════════════════════
+TÜRKÇE KALIP (CALQUE) ENGELLERİ — 10 YASAK KALIP
+═══════════════════════════════════════════
+
+[C-1] "de/da" tek başına → YANLIŞ: "malê de" | DOĞRU: "li malê"
+[C-2] Zamir düşürme → YANLIŞ: "Baş im." | DOĞRU: "Ez baş im."
+[C-3] "baş e" = tamam → YANLIŞ kullanım; "tamam" için: "Erê" / "Belê" / "Rast e"
+[C-4] Soru kelime sırası → YANLIŞ: "Tu yî çawa?" | DOĞRU: "Tu çawa yî?"
+[C-5] "ji bo" A1'de → YASAK. Sadece "Spas" kullan.
+[C-6] "heye" öznesiz → YANLIŞ: "Pirtûk heye" | DOĞRU: "Pirtûk li wir e" / "Pirtûk heye li ..."
+[C-7] Çoğul "-ler" eki → YANLIŞ: "pirtûkler" | DOĞRU: "pirtûk" (genel) / "pirtûkan" (belirli çoğul)
+[C-8] "daha" karşılaştırma → YANLIŞ: "daha baş" | DOĞRU: "ji vê baştir"
+[C-9] Olumsuzluk → YANLIŞ: "çûn değil" | DOĞRU: "naçe" (gitmiyor) / "nayê" (gelmiyor)
+[C-10] Mastar + istemek → YANLIŞ: "dixwazim çûn" | DOĞRU: "dixwazim biçim"
+
+ALTIN KURAL: Her Kürtçe kelime/ifade üretmeden önce sor:
+"Bu yukarıdaki sözlükte var mı?" → varsa onu kullan.
+"Yoksa: Bu kelime gerçek Kurmancice mi, yoksa Türkçeden tahmin mi?" → emin değilsen farklı, daha basit kelime seç.
+${projectTextRules ? `
+═══════════════════════════════════════════
+EK PROJE KURALLARI
+═══════════════════════════════════════════
+${projectTextRules}
+` : ''}
 `;
 }
 
@@ -611,8 +672,10 @@ export async function generateLesson(
   const providerLabel = getTextProviderLabel();
   onProgress?.(`${providerLabel} bağlantısı kuruluyor...`);
 
+  const projectSettings = await getProjectSettings().catch(() => ({ imageBrief: '', textQualityRules: '' }));
+
   const rawContent = await generateTextJson({
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt(projectSettings.textQualityRules || undefined),
     user: buildUserPrompt(req, unit),
     temperature: 0.7,
     maxTokens: 16000,
@@ -1167,8 +1230,9 @@ GEÇERLİ ID LİSTESİ — distractor dahil sadece bunları kullan: ${itemIds}
 `;
 
   const providerLabel = getTextProviderLabel();
+  const pSettings = await getProjectSettings().catch(() => ({ imageBrief: '', textQualityRules: '' }));
   const raw = await generateTextJson({
-    system: buildSystemPrompt(),
+    system: buildSystemPrompt(pSettings.textQualityRules || undefined),
     user: userPrompt,
     temperature: 0.7,
     maxTokens: 8000,

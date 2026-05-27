@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getAdminUsers, saveAdminUser, deleteAdminUser } from '../lib/firestore';
+import { getProjectSettings, saveProjectSettings, invalidateProjectSettingsCache } from '../lib/projectSettings';
 import { useAuth } from '../hooks/useAuth';
 import type { AdminUser, AdminRole } from '../types/admin';
 
@@ -15,6 +16,11 @@ export default function SettingsPage() {
 
   const isOwner = adminUser?.role === 'owner';
 
+  const [imageBrief, setImageBrief] = useState('');
+  const [textQualityRules, setTextQualityRules] = useState('');
+  const [briefLoading, setBriefLoading] = useState(true);
+  const [briefSaving, setBriefSaving] = useState(false);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(''), 3000);
@@ -23,6 +29,27 @@ export default function SettingsPage() {
   useEffect(() => {
     getAdminUsers().then(us => { setUsers(us); setLoading(false); });
   }, []);
+
+  useEffect(() => {
+    getProjectSettings().then(s => {
+      setImageBrief(s.imageBrief ?? '');
+      setTextQualityRules(s.textQualityRules ?? '');
+      setBriefLoading(false);
+    }).catch(() => setBriefLoading(false));
+  }, []);
+
+  const handleSaveBrief = async () => {
+    setBriefSaving(true);
+    try {
+      await saveProjectSettings({ imageBrief, textQualityRules });
+      invalidateProjectSettingsCache();
+      showToast('✅ Proje kısıtları kaydedildi');
+    } catch {
+      showToast('❌ Kaydedilemedi');
+    } finally {
+      setBriefSaving(false);
+    }
+  };
 
   const handleDeleteUser = async (uid: string) => {
     if (uid === adminUser?.uid) { showToast('❌ Kendi hesabını silemezsin'); return; }
@@ -137,6 +164,71 @@ export default function SettingsPage() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      {/* Proje AI Kısıtları */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>🎨 Proje AI Kısıtları</h2>
+        <p style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, lineHeight: 1.6 }}>
+          Bu alanlarda yazılanlar <strong>tüm AI üretimlerine</strong> otomatik eklenir.
+          Görsel kısmı her image prompt'unun başına, yazılı kısmı sistem prompt'una enjekte edilir.
+          Buraya tek bir kez yaz — tüm prompt kutuları bu hafızayı paylaşır.
+        </p>
+
+        {briefLoading ? (
+          <div style={{ color: 'var(--text3)', fontSize: 13 }}>Yükleniyor...</div>
+        ) : (
+          <>
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label" style={{ marginBottom: 6, display: 'block', fontWeight: 700 }}>
+                🖼️ Görsel Stil Kısıtı
+                <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 8 }}>
+                  — image prompt'larına prepend edilir
+                </span>
+              </label>
+              <textarea
+                value={imageBrief}
+                onChange={e => setImageBrief(e.target.value)}
+                rows={7}
+                placeholder={`Örnek:\nKURDIGO STYLE GUIDE — follow exactly:\n- 3D cartoon illustration, warm soft lighting, Pixar-quality render\n- Characters: BARAN (24yo, curly black hair, blue shirt, friendly learner) and BERFIN (26yo, long black hair, mint green dress, journalist)\n- KURDO mascot: gender-neutral yellow-orange 3D plush bird, RED KNITTED KURDISH SCARF always visible\n- Square 1024x1024, mobile-readable, single concept, no text/logo/watermark\n- Kurdish/Diyarbakir atmosphere: stone alleys, bazaar, warm family interiors`}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7, resize: 'vertical' }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Karakterleri (BARAN, BERFIN, KURDO) ve stil tercihini (3D çizgi film / gerçekçi / flat design) buraya yaz.
+                Artık her görselde aynı stili göreceksin.
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginBottom: 16 }}>
+              <label className="form-label" style={{ marginBottom: 6, display: 'block', fontWeight: 700 }}>
+                📝 Ek Kürtçe Metin Kuralları
+                <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 8 }}>
+                  — sistem prompt'una eklenir
+                </span>
+              </label>
+              <textarea
+                value={textQualityRules}
+                onChange={e => setTextQualityRules(e.target.value)}
+                rows={5}
+                placeholder={`Örnek:\n- Bu ünitede şehir isimleri: Amed (Diyarbakır), Wan (Van), Mêrdîn (Mardin) kullan.\n- Diyalog cümlelerinde günlük konuşma dili kullan, resmi yazı dili değil.\n- Bu ünitede sadece Botî lehçesini kullan (veya Badini, Sorani değil).`}
+                style={{ width: '100%', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.7, resize: 'vertical' }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Dilbilgisi kuralları, lehçe tercihleri veya içerik odağını buraya yaz.
+                Zaten aktif olan AI-ERR kurallarına ek olarak uygulanır.
+              </div>
+            </div>
+
+            <button
+              className="btn btn-primary"
+              onClick={handleSaveBrief}
+              disabled={briefSaving}
+              style={{ minWidth: 140 }}
+            >
+              {briefSaving ? '⏳ Kaydediliyor...' : '💾 Kaydet'}
+            </button>
+          </>
         )}
       </div>
 
