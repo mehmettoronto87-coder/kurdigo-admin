@@ -1547,6 +1547,33 @@ export default function ProductionPanel({
                   {(s.imageStatus === 'pending' || (imageBroken && s.imageStatus !== 'approved')) && (
                     promptModeFor === item.id ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {[
+                            { label: '👤 İnsanlı', value: 'with a person in the scene, ' },
+                            { label: '📦 Objeli', value: 'object only, no people, ' },
+                            { label: '🏠 İç Mekan', value: 'indoor setting, ' },
+                            { label: '🌳 Dış Mekan', value: 'outdoor setting, ' },
+                            { label: '🛒 Ürün', value: 'product shot style, ' },
+                            { label: '⚡ Eylem', value: 'action scene showing a verb or action, ' },
+                          ].map(chip => (
+                            <button
+                              key={chip.label}
+                              type="button"
+                              onClick={() => setItemPreGenPrompts(prev => ({
+                                ...prev,
+                                [item.id]: (prev[item.id] ?? '') + chip.value,
+                              }))}
+                              style={{
+                                fontSize: 10, padding: '2px 7px', borderRadius: 12,
+                                border: '1px solid var(--border)', background: 'var(--bg4)',
+                                color: 'var(--text1)', cursor: 'pointer', lineHeight: 1.6,
+                              }}
+                              disabled={!!generatingId || generatingAll}
+                            >
+                              {chip.label}
+                            </button>
+                          ))}
+                        </div>
                         <textarea
                           autoFocus
                           value={itemPreGenPrompts[item.id] ?? ''}
