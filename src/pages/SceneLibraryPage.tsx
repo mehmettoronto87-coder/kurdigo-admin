@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase/config';
-import { subscribeSceneLibrary, updateAssetAudio } from '../lib/firestore';
+import { subscribeSceneLibrary, saveSceneAsset, updateAssetAudio } from '../lib/firestore';
 import { UNITS } from '../lib/curriculumData';
 import type { SceneAsset, AudioStatus } from '../types/admin';
 

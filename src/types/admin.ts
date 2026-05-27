@@ -26,6 +26,7 @@ export interface AdminLesson {
   aiGeneratedAt?: string;
   changeHistory: ChangeRecord[];
   mediaStatus?: Record<string, ItemMediaStatus>;
+  stepMedia?: Record<string, StepMediaItem>;
 }
 
 export interface ChangeRecord {
@@ -84,6 +85,20 @@ export interface ItemMediaStatus {
   audioUrl?: string;
   audioStoragePath?: string;
   audioStatus: AudioItemStatus;
+}
+
+export interface StepMediaItem {
+  imageUrl?: string;
+  imageStoragePath?: string;
+  prompt?: string;
+  generatedAt?: string;
+}
+
+export interface StepMediaItem {
+  imageUrl?: string;
+  imageStoragePath?: string;
+  prompt?: string;
+  generatedAt?: string;
 }
 
 // ─── Rol sistemi ────────────────────────────────────────────────────────────

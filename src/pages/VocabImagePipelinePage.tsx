@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getLessonsForUnit } from '../lib/firestore';
 import { UNITS } from '../lib/curriculumData';
+import { generateImageAsset } from '../lib/aiProviders';
 import {
   DEFAULT_QC,
   buildVocabImageJobs,
@@ -38,22 +39,7 @@ function fileName(job: VocabImageJob): string {
   return `${job.unitId}_${job.itemId}.webp`;
 }
 
-async function generatePollinations(prompt: string): Promise<Blob> {
-  const response = await fetch('/api/pollinations-image', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      model: 'sana',
-      seed: Math.floor(Math.random() * 1000000000),
-    }),
-  });
 
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  return response.blob();
-}
 
 export default function VocabImagePipelinePage() {
   const [unitId, setUnitId] = useState('unit9');
@@ -118,8 +104,8 @@ export default function VocabImagePipelinePage() {
       const prompt = current?.qc.notes
         ? `${job.prompt}\n\nRetry note from reviewer: ${current.qc.notes}`
         : job.prompt;
-      const blob = await generatePollinations(prompt);
-      const url = URL.createObjectURL(blob);
+      const asset = await generateImageAsset(prompt);
+      const url = URL.createObjectURL(asset.blob);
       setJobState(job, {
         url,
         loading: false,
@@ -189,7 +175,7 @@ export default function VocabImagePipelinePage() {
           />
         </label>
         <button className="btn btn-primary" onClick={generateBatch} disabled={loading || jobs.length === 0}>
-          Ücretsiz {batchLimit} deneme üret
+          OpenAI ile {batchLimit} üret
         </button>
         <button className="btn" onClick={() => selected && generateOne(selected)} disabled={!selected || selectedState?.loading}>
           Seçileni üret / retry
@@ -310,7 +296,7 @@ export default function VocabImagePipelinePage() {
 
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button className="btn btn-primary" onClick={() => generateOne(selected)} disabled={selectedState?.loading}>
-                    {selectedState?.url ? 'Retry üret' : 'Pollinations ile üret'}
+                    {selectedState?.url ? 'Retry üret' : 'OpenAI ile üret'}
                   </button>
                   <button
                     className="btn"

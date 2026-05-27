@@ -5,7 +5,7 @@ import {
 } from 'firebase/firestore';
 import { ref, listAll, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase/config';
-import type { AdminLesson, SceneAsset, AdminUser, LessonStatus, ChangeRecord, ItemMediaStatus } from '../types/admin';
+import type { AdminLesson, SceneAsset, AdminUser, LessonStatus, ChangeRecord, ItemMediaStatus, StepMediaItem } from '../types/admin';
 import type { CurriculumMediaItem } from '../types/curriculum';
 
 // ========== LESSONS ==========
@@ -132,6 +132,19 @@ export async function updateLessonItemMedia(
   };
   await updateDoc(doc(db, 'adminLessons', lessonId), patch);
   // publicLessons'ı da güncelle (lesson live ise orada da mediaStatus olmalı)
+  await updateDoc(doc(db, 'publicLessons', lessonId), patch).catch(() => {});
+}
+
+export async function updateLessonStepMedia(
+  lessonId: string,
+  stepId: string,
+  media: StepMediaItem,
+): Promise<void> {
+  const patch = {
+    [`stepMedia.${stepId}`]: stripUndefined(media),
+    updatedAt: new Date().toISOString(),
+  };
+  await updateDoc(doc(db, 'adminLessons', lessonId), patch);
   await updateDoc(doc(db, 'publicLessons', lessonId), patch).catch(() => {});
 }
 

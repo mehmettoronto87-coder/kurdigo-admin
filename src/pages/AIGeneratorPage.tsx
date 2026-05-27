@@ -542,7 +542,7 @@ export default function AIGeneratorPage() {
 
   const handleGenerate = async () => {
     if (!aiProviderReady) {
-      setError(`${aiProviderLabel} için API anahtarı tanımlı değil. Gemini kullanacaksan admin/.env içine VITE_GEMINI_API_KEY ekle.`);
+      setError(`OpenAI API anahtarı tanımlı değil. admin/.env içine VITE_OPENAI_API_KEY ekle.`);
       setStatus('error');
       return;
     }

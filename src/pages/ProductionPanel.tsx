@@ -6,14 +6,25 @@ import {
   markAssetUsedInLesson,
   syncLessonToPublic,
   updateLessonItemMedia,
+  updateLessonStepMedia,
   updateLessonStatus,
   upsertSceneAssetForLessonItem,
 } from '../lib/firestore';
 import { UNITS } from '../lib/curriculumData';
 import { useAuth } from '../hooks/useAuth';
-import type { AdminLesson, ItemMediaStatus, ImageGenStatus, AudioItemStatus, SceneAsset } from '../types/admin';
+import type { AdminLesson, ItemMediaStatus, ImageGenStatus, AudioItemStatus, SceneAsset, StepMediaItem } from '../types/admin';
 import type { CurriculumMediaItem } from '../types/curriculum';
+import type { CurriculumLessonStep } from '../types/curriculum';
 import { generateImageAsset, getImageProviderLabel } from '../lib/aiProviders';
+
+const STEP_COLORS: Record<string, string> = {
+  learn_card: '#1cb0f6', image_to_word: '#58cc02',
+  word_to_image: '#58cc02', listen_to_word: '#ff9600', listen_to_image: '#ff9600',
+  match_pairs: '#e74c3c', fill_blank: '#f39c12', word_order: '#e67e22',
+  scene_question: '#16a085', mini_dialogue_choice: '#2980b9', typing: '#8e44ad',
+  dictation: '#c0392b', culture_spotlight: '#27ae60', pronunciation_drill: '#2c3e50',
+  character_dialogue: '#3498db', grammar_card: '#1abc9c',
+};
 
 // ─── HELPERS ───
 
@@ -301,30 +312,67 @@ function extractLessonText(lesson: AdminLesson): string {
   return parts.join(' ').toLocaleLowerCase('tr-TR');
 }
 
-function buildImagePrompt(item: CurriculumMediaItem, lesson: AdminLesson, revisionHint?: string): string {
+function buildImagePrompt(item: CurriculumMediaItem, lesson: AdminLesson, revisionHint?: string, conceptOverride?: string): string {
   const affordances = item.visualAffordanceTags?.join(', ');
   const expressionVisual = isDialogueVisualItem(item);
+  const subject = conceptOverride
+    ? `Custom concept: ${conceptOverride}. Context: showing "${item.ku}" (${item.tr}). No text, no labels.`
+    : expressionVisual
+      ? `Subject: the Kurdish expression "${item.ku}" (= "${item.tr}" in Turkish${item.en ? `, "${item.en}" in English` : ''}). Show meaning through scene and body language only — no text anywhere.`
+      : `Subject: "${item.ku}" (= "${item.tr}" in Turkish${item.en ? `, "${item.en}" in English` : ''}). Show the subject visually — no text, no labels, no written word.`;
   return [
     `Flat digital illustration for a children's language learning app.`,
-    // ── IRON-CLAD TEXT BAN — checked first so the model never forgets ──
     `IRON-CLAD TEXT BAN: The image must contain ZERO text, letters, numbers, words, labels, captions, speech bubbles, thought bubbles, or signs that spell out the target word. Not even partial letters. If any text appears in the image the result is rejected. This rule overrides everything else.`,
-    // ── Subject ──
-    expressionVisual
-      ? `Subject: the Kurdish expression "${item.ku}" (= "${item.tr}" in Turkish${item.en ? `, "${item.en}" in English` : ''}). Show meaning through scene and body language only — no text anywhere.`
-      : `Subject: "${item.ku}" (= "${item.tr}" in Turkish${item.en ? `, "${item.en}" in English` : ''}). Show the subject visually — no text, no labels, no written word.`,
-    item.emoji ? `Reference emoji (visual hint only): ${item.emoji}.` : '',
-    affordances ? `Key visual elements: ${affordances}.` : '',
-    // ── Location — smart indoor/outdoor ──
+    subject,
+    !conceptOverride && item.emoji ? `Reference emoji (visual hint only): ${item.emoji}.` : '',
+    !conceptOverride && affordances ? `Key visual elements: ${affordances}.` : '',
     buildLocationRule(item, lesson),
-    // ── Characters ──
     buildCharacterDiversityRule(),
     buildGenderBalanceRule(item),
     buildPointingGestureRule(item),
-    expressionVisual ? buildExpressionSceneRule(item) : '',
-    // ── Style ──
+    !conceptOverride && expressionVisual ? buildExpressionSceneRule(item) : '',
     `Style: vibrant, friendly, simple, clean. Duolingo-inspired. Square 1:1 format.`,
     revisionHint ? `IMPORTANT REVISION REQUEST: ${revisionHint}` : '',
   ].filter(Boolean).join(' ');
+}
+
+function buildStepImagePrompt(step: CurriculumLessonStep, userPrompt: string): string {
+  return [
+    `Flat digital illustration for a children's Kurdish language learning app.`,
+    `IRON-CLAD TEXT BAN: The image must contain ZERO text, letters, numbers, words, labels, captions, or speech bubbles. This rule overrides everything else.`,
+    `Card type: ${step.type}. Custom concept: ${userPrompt}`,
+    `Style: vibrant, friendly, simple, clean. Duolingo-inspired. Square 1:1 format.`,
+    `No photorealism, no brand marks, no violence, no hate imagery.`,
+  ].filter(Boolean).join(' ');
+}
+
+async function compressImageFile(file: File, maxPx = 1200, quality = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let w = img.naturalWidth;
+      let h = img.naturalHeight;
+      if (w > maxPx || h > maxPx) {
+        const ratio = Math.min(maxPx / w, maxPx / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        blob => blob ? resolve(blob) : reject(new Error('Sıkıştırma başarısız')),
+        'image/jpeg',
+        quality,
+      );
+    };
+    img.onerror = reject;
+    img.src = objectUrl;
+  });
 }
 
 function defaultStatus(): ItemMediaStatus {
@@ -885,6 +933,21 @@ export default function ProductionPanel({
   const [error, setError] = useState('');
   const [revisionTexts, setRevisionTexts] = useState<Record<string, string>>({});
   const [bulkRevision, setBulkRevision] = useState('');
+  const [promptModeFor, setPromptModeFor] = useState<string | null>(null);
+  const [itemPreGenPrompts, setItemPreGenPrompts] = useState<Record<string, string>>({});
+  const [stepImages, setStepImages] = useState<Record<string, { url?: string; path?: string; loading?: boolean; error?: string }>>(
+    () => {
+      const init: Record<string, { url?: string; path?: string }> = {};
+      for (const [stepId, m] of Object.entries(lesson.stepMedia ?? {})) {
+        if (m.imageUrl) init[stepId] = { url: m.imageUrl, path: m.imageStoragePath };
+      }
+      return init;
+    },
+  );
+  const [stepImagePrompts, setStepImagePrompts] = useState<Record<string, string>>(
+    () => Object.fromEntries(Object.entries(lesson.stepMedia ?? {}).map(([id, m]) => [id, m.prompt ?? ''])),
+  );
+  const [stepSectionOpen, setStepSectionOpen] = useState(false);
   // pending: local file seçildi, henüz upload edilmedi → trimmer gösterilir
   const [pendingAudio, setPendingAudio] = useState<Record<string, { file: File; localUrl: string }>>({});
   const reviewIds = new Set(lesson.reviewItemIds ?? []);
@@ -966,7 +1029,7 @@ export default function ProductionPanel({
   }
 
   // ─── IMAGE ───
-  async function generateImage(item: CurriculumMediaItem, revisionHint?: string) {
+  async function generateImage(item: CurriculumMediaItem, revisionHint?: string, conceptOverride?: string) {
     if (reviewIds.has(item.id) || externalDistractorIds.has(item.id)) {
       setError(`"${item.ku}" önceki dersten gelen hazır kart; bu derste yeniden görsel üretilmez.`);
       return;
@@ -993,7 +1056,7 @@ export default function ProductionPanel({
         }
       }
 
-      const asset = await generateImageAsset(buildImagePrompt(item, lesson, revisionHint));
+      const asset = await generateImageAsset(buildImagePrompt(item, lesson, revisionHint, conceptOverride));
       const ext = asset.contentType.includes('jpeg') || asset.contentType.includes('jpg') ? 'jpg' : 'png';
       const path = `images/lessons/${lesson.id}/${item.id}_${Date.now()}.${ext}`;
       const storageRef = ref(storage, path);
@@ -1016,16 +1079,38 @@ export default function ProductionPanel({
     }
   }
 
-  async function generateAllImages(revisionHint?: string) {
+  async function generateAllImages(conceptOverride?: string) {
     setGeneratingAll(true);
     const pending = productionItems.filter(item => {
       const s = getStatus(item.id).imageStatus;
       return s === 'pending' || s === 'rejected';
     });
     for (const item of pending) {
-      await generateImage(item, revisionHint || undefined);
+      await generateImage(item, undefined, conceptOverride || undefined);
     }
     setGeneratingAll(false);
+  }
+
+  async function generateStepImage(step: CurriculumLessonStep, prompt: string) {
+    if (!prompt.trim()) return;
+    setStepImages(prev => ({ ...prev, [step.id]: { loading: true } }));
+    try {
+      const fullPrompt = buildStepImagePrompt(step, prompt.trim());
+      const asset = await generateImageAsset(fullPrompt);
+      const ext = asset.contentType.includes('jpeg') || asset.contentType.includes('jpg') ? 'jpg' : 'png';
+      const path = `images/steps/${step.id}_${Date.now()}.${ext}`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, asset.blob, { contentType: asset.contentType });
+      const url = await getDownloadURL(storageRef);
+      setStepImages(prev => ({ ...prev, [step.id]: { url, path } }));
+      const stepMeta: StepMediaItem = { imageUrl: url, imageStoragePath: path, prompt: prompt.trim(), generatedAt: new Date().toISOString() };
+      await updateLessonStepMedia(lesson.id, step.id, stepMeta);
+    } catch (e) {
+      setStepImages(prev => ({
+        ...prev,
+        [step.id]: { error: e instanceof Error ? e.message : 'Görsel üretilemedi' },
+      }));
+    }
   }
 
   function handleRevise(item: CurriculumMediaItem) {
@@ -1048,10 +1133,10 @@ export default function ProductionPanel({
     setGeneratingId(item.id);
     setError('');
     try {
-      const ext = file.name.split('.').pop() ?? 'jpg';
-      const path = `images/lessons/${lesson.id}/${item.id}_manual_${Date.now()}.${ext}`;
+      const compressed = await compressImageFile(file).catch(() => file);
+      const path = `images/lessons/${lesson.id}/${item.id}_manual_${Date.now()}.jpg`;
       const storageRef = ref(storage, path);
-      await uploadBytes(storageRef, file, { contentType: file.type });
+      await uploadBytes(storageRef, compressed, { contentType: 'image/jpeg' });
       const url = await getDownloadURL(storageRef);
       setImageLoadErrors(prev => {
         const next = new Set(prev);
@@ -1254,36 +1339,41 @@ export default function ProductionPanel({
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, justifyContent: 'center' }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center', flex: 1 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text2)', display: 'block', marginBottom: 4 }}>
+              🖊️ Görsel Promptu
+              <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 6 }}>
+                — tüm yeni kelimeler bu konseptle üretilir (boş = otomatik)
+              </span>
+            </label>
+            <textarea
               value={bulkRevision}
               onChange={e => setBulkRevision(e.target.value)}
-              placeholder="Toplu revize notu (opsiyonel)..."
-              style={{ flex: 1, fontSize: 11, minWidth: 0 }}
-              onKeyDown={e => e.key === 'Enter' && !generatingAll && generateAllImages(bulkRevision || undefined)}
+              placeholder="Ne görmek istiyorsun? Örn: Bir Kürt çarşısında geçen neşeli bir sahne, sıcak renkler, genç karakterler..."
+              style={{ width: '100%', fontSize: 11, minHeight: 52, resize: 'vertical', boxSizing: 'border-box' }}
             />
-            <button
-              className="btn btn-blue btn-sm"
-              onClick={() => generateAllImages(bulkRevision || undefined)}
-              disabled={generatingAll || !!generatingId}
-              title={`Görseli eksik ${productionItems.length} yeni kelimeyi üret. Tekrar kelimeleri (${reviewItems.length} adet) üretim dışıdır.`}
-            >
-              {generatingAll ? '⏳ Üretiliyor…' : `🎨 ${productionItems.length} Yeni Kelime Görseli Üret`}
-            </button>
           </div>
-          <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
-            🎙️ Toplu Ses Yükle
-            <input
-              type="file"
-              multiple
-              accept="audio/*"
-              style={{ display: 'none' }}
-              onChange={e => e.target.files && handleBulkFileSelect(e.target.files)}
-            />
-          </label>
+          <button
+            className="btn btn-blue btn-sm"
+            onClick={() => generateAllImages(bulkRevision.trim() || undefined)}
+            disabled={generatingAll || !!generatingId}
+            title={`Görseli eksik ${productionItems.length} yeni kelimeyi üret. Tekrar kelimeleri (${reviewItems.length} adet) üretim dışıdır.`}
+          >
+            {generatingAll ? '⏳ Üretiliyor…' : bulkRevision.trim() ? `🎨 Prompt ile ${productionItems.length} Görsel Üret` : `🎨 ${productionItems.length} Yeni Kelime Görseli Üret`}
+          </button>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              🎙️ Toplu Ses Yükle
+              <input
+                type="file"
+                multiple
+                accept="audio/*"
+                style={{ display: 'none' }}
+                onChange={e => e.target.files && handleBulkFileSelect(e.target.files)}
+              />
+            </label>
+          </div>
         </div>
-      </div>
 
       {error && (
         <div className="validation-box validation-error" style={{ marginBottom: 16 }}>{error}</div>
@@ -1452,66 +1542,161 @@ export default function ProductionPanel({
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <ImageStatusBadge status={s.imageStatus} />
                   </div>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                    {/* Görsel üret */}
-                    {(s.imageStatus === 'pending' || s.imageStatus === 'rejected' || imageBroken) && (
-                      <button
-                        className="btn btn-blue btn-sm"
-                        style={{ fontSize: 11 }}
-                        onClick={() => generateImage(item)}
-                        disabled={!!generatingId || generatingAll}
-                      >
-                        🎨 {imageProviderLabel} ile Üret
-                      </button>
-                    )}
-                    {s.imageStatus === 'generated' && !imageBroken && (
-                      <>
-                        <button className="btn btn-primary btn-sm" style={{ fontSize: 11 }} onClick={() => approveImage(item)}>✓ Onayla</button>
-                        <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => generateImage(item)} disabled={!!generatingId}>🔄 Yeniden</button>
-                        <button className="btn btn-red btn-sm" style={{ fontSize: 11 }} onClick={() => rejectImage(item)}>✗ Reddet</button>
-                      </>
-                    )}
-                    {(s.imageStatus === 'approved') && (
-                      <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => generateImage(item)} disabled={!!generatingId}>🔄 Yeniden Üret</button>
-                    )}
-                    {/* Manuel yükle — her durumda mevcut */}
-                    <label
-                      className="btn btn-secondary btn-sm"
-                      style={{ fontSize: 11, cursor: 'pointer' }}
-                      title="Kendi fotoğrafını yükle — doğrudan onaylanır"
-                    >
-                      📁 Manuel Yükle
-                      <input
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={e => e.target.files?.[0] && uploadManualImage(item, e.target.files[0])}
-                      />
-                    </label>
-                  </div>
-                </div>
 
-                {/* Revize satırı — görsel üretildikten sonra görünür */}
-                {(s.imageStatus === 'generated' || s.imageStatus === 'approved' || s.imageStatus === 'rejected') && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                    <input
-                      value={revisionTexts[item.id] ?? ''}
-                      onChange={e => setRevisionTexts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                      placeholder="Revize: daha açık renk, arka plan beyaz, karakter ekle..."
-                      style={{ flex: 1, fontSize: 11 }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleRevise(item); }}
-                      disabled={!!generatingId || generatingAll}
-                    />
-                    <button
-                      className="btn btn-blue btn-sm"
-                      style={{ fontSize: 11, flexShrink: 0 }}
-                      onClick={() => handleRevise(item)}
-                      disabled={!revisionTexts[item.id]?.trim() || !!generatingId || generatingAll}
-                    >
-                      🔄
-                    </button>
-                  </div>
-                )}
+                  {/* ── İlk üretim: prompt-first akış ── */}
+                  {(s.imageStatus === 'pending' || (imageBroken && s.imageStatus !== 'approved')) && (
+                    promptModeFor === item.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <textarea
+                          autoFocus
+                          value={itemPreGenPrompts[item.id] ?? ''}
+                          onChange={e => setItemPreGenPrompts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Ne görmek istiyorsun? Örn: Güneşli bir pazarda portakal tutan çocuk..."
+                          style={{ fontSize: 11, minHeight: 52, resize: 'vertical' }}
+                          disabled={!!generatingId || generatingAll}
+                        />
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            className="btn btn-blue btn-sm"
+                            style={{ fontSize: 11, flex: 1 }}
+                            onClick={() => {
+                              const concept = itemPreGenPrompts[item.id]?.trim();
+                              generateImage(item, undefined, concept || undefined);
+                              setPromptModeFor(null);
+                            }}
+                            disabled={!!generatingId || generatingAll}
+                          >
+                            🎨 Üret
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ fontSize: 10 }}
+                            onClick={() => setPromptModeFor(null)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <button
+                          className="btn btn-blue btn-sm"
+                          style={{ fontSize: 11 }}
+                          onClick={() => setPromptModeFor(item.id)}
+                          disabled={!!generatingId || generatingAll}
+                        >
+                          🖊️ Prompt Yaz & Üret
+                        </button>
+                        <label className="btn btn-secondary btn-sm" style={{ fontSize: 11, cursor: 'pointer' }} title="Kendi fotoğrafını yükle">
+                          📁 Manuel
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && uploadManualImage(item, e.target.files[0])} />
+                        </label>
+                      </div>
+                    )
+                  )}
+
+                  {/* ── Üretildi: onayla / reddet / revize ── */}
+                  {s.imageStatus === 'generated' && !imageBroken && (
+                    <>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <button className="btn btn-primary btn-sm" style={{ fontSize: 11 }} onClick={() => approveImage(item)}>✓ Onayla</button>
+                        <button className="btn btn-red btn-sm" style={{ fontSize: 11 }} onClick={() => rejectImage(item)}>✗ Reddet</button>
+                        <label className="btn btn-secondary btn-sm" style={{ fontSize: 11, cursor: 'pointer' }}>
+                          📁 Manuel
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && uploadManualImage(item, e.target.files[0])} />
+                        </label>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <textarea
+                          value={revisionTexts[item.id] ?? ''}
+                          onChange={e => setRevisionTexts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Revize notu: daha açık renk, farklı karakter, arka planı değiştir..."
+                          style={{ flex: 1, fontSize: 11, minHeight: 40, resize: 'vertical' }}
+                          disabled={!!generatingId || generatingAll}
+                        />
+                        <button
+                          className="btn btn-blue btn-sm"
+                          style={{ fontSize: 11, flexShrink: 0, alignSelf: 'flex-end' }}
+                          onClick={() => handleRevise(item)}
+                          disabled={!revisionTexts[item.id]?.trim() || !!generatingId || generatingAll}
+                        >
+                          🔄
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* ── Onaylı: yeniden üret seçeneği ── */}
+                  {s.imageStatus === 'approved' && (
+                    <>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <button className="btn btn-secondary btn-sm" style={{ fontSize: 11 }} onClick={() => setPromptModeFor(item.id)} disabled={!!generatingId}>🔄 Yeniden Üret</button>
+                        <label className="btn btn-secondary btn-sm" style={{ fontSize: 11, cursor: 'pointer' }}>
+                          📁 Manuel
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && uploadManualImage(item, e.target.files[0])} />
+                        </label>
+                      </div>
+                      {promptModeFor === item.id && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          <textarea
+                            autoFocus
+                            value={itemPreGenPrompts[item.id] ?? ''}
+                            onChange={e => setItemPreGenPrompts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            placeholder="Yeni görsel promptu (boş = otomatik)..."
+                            style={{ fontSize: 11, minHeight: 40, resize: 'vertical' }}
+                          />
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <button
+                              className="btn btn-blue btn-sm"
+                              style={{ fontSize: 11, flex: 1 }}
+                              onClick={() => {
+                                const concept = itemPreGenPrompts[item.id]?.trim();
+                                generateImage(item, undefined, concept || undefined);
+                                setPromptModeFor(null);
+                              }}
+                            >🎨 Üret</button>
+                            <button className="btn btn-secondary btn-sm" style={{ fontSize: 10 }} onClick={() => setPromptModeFor(null)}>✕</button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* ── Reddedildi ── */}
+                  {s.imageStatus === 'rejected' && !imageBroken && (
+                    promptModeFor === item.id ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <textarea
+                          autoFocus
+                          value={itemPreGenPrompts[item.id] ?? ''}
+                          onChange={e => setItemPreGenPrompts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Yeni görsel promptu (boş = otomatik)..."
+                          style={{ fontSize: 11, minHeight: 40, resize: 'vertical' }}
+                        />
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            className="btn btn-blue btn-sm"
+                            style={{ fontSize: 11, flex: 1 }}
+                            onClick={() => {
+                              const concept = itemPreGenPrompts[item.id]?.trim();
+                              generateImage(item, undefined, concept || undefined);
+                              setPromptModeFor(null);
+                            }}
+                          >🎨 Üret</button>
+                          <button className="btn btn-secondary btn-sm" style={{ fontSize: 10 }} onClick={() => setPromptModeFor(null)}>✕</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <button className="btn btn-blue btn-sm" style={{ fontSize: 11 }} onClick={() => setPromptModeFor(item.id)} disabled={!!generatingId || generatingAll}>🖊️ Prompt Yaz & Üret</button>
+                        <label className="btn btn-secondary btn-sm" style={{ fontSize: 11, cursor: 'pointer' }}>
+                          📁 Manuel
+                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={e => e.target.files?.[0] && uploadManualImage(item, e.target.files[0])} />
+                        </label>
+                      </div>
+                    )
+                  )}
+                </div>
 
                 {/* Ses bölümü */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
@@ -1575,6 +1760,96 @@ export default function ProductionPanel({
             </div>
           );
         })}
+      </div>
+
+      {/* ── Kart Görselleri (Opsiyonel) ── */}
+      <div className="card" style={{ marginBottom: 24 }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}
+          onClick={() => setStepSectionOpen(o => !o)}
+        >
+          <span style={{ fontSize: 14 }}>🃏</span>
+          <span style={{ fontWeight: 700, fontSize: 13 }}>Kart Görselleri</span>
+          <span style={{ fontSize: 11, color: 'var(--text3)', flex: 1 }}>
+            — soru ve konu kartları için özel görsel üret (kelime görsellerinden ayrı kategoride saklanır)
+          </span>
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+            {Object.keys(stepImages).filter(id => stepImages[id]?.url).length}/{lesson.steps.length} görsel {stepSectionOpen ? '▲' : '▼'}
+          </span>
+        </div>
+
+        {stepSectionOpen && (
+          <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{
+              background: 'var(--bg4)', borderRadius: 6, padding: '8px 12px',
+              fontSize: 11, color: 'var(--text3)', marginBottom: 4,
+            }}>
+              Bu görseller <strong>kelime kütüphanesinden ayrı</strong> tutulur —
+              <code style={{ marginLeft: 4 }}>images/steps/</code> yolunda saklanır ve ID ile tekrar kullanılabilir.
+            </div>
+            {lesson.steps.map((step, idx) => {
+              const imgState = stepImages[step.id];
+              const prompt = stepImagePrompts[step.id] ?? '';
+              const color = STEP_COLORS[step.type] ?? '#666';
+              return (
+                <div
+                  key={step.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: imgState?.url ? '72px 1fr' : '1fr',
+                    gap: 10,
+                    padding: '10px 12px',
+                    background: 'var(--bg4)',
+                    borderRadius: 8,
+                    border: `1px solid ${imgState?.url ? 'var(--green)' : 'var(--border)'}`,
+                    alignItems: 'start',
+                  }}
+                >
+                  {imgState?.url && (
+                    <img
+                      src={imgState.url}
+                      alt={`step-${step.id}`}
+                      style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 6 }}
+                    />
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <span style={{
+                        fontSize: 10, padding: '2px 6px', borderRadius: 4, fontWeight: 700,
+                        background: `${color}22`, color,
+                      }}>
+                        #{idx + 1} {step.type}
+                      </span>
+                      <span style={{ fontSize: 10, color: 'var(--text3)' }}>{step.id}</span>
+                      {imgState?.url && <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 700 }}>✓ Görsel var</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <textarea
+                        value={prompt}
+                        onChange={e => setStepImagePrompts(prev => ({ ...prev, [step.id]: e.target.value }))}
+                        placeholder="Bu kart için görsel promptu yaz... Örn: Bir aile yemek masasında oturuyor, mutfak ortamı, Kürt evi"
+                        style={{ flex: 1, fontSize: 11, minHeight: 40, resize: 'vertical' }}
+                        disabled={imgState?.loading}
+                      />
+                      <button
+                        className="btn btn-blue btn-sm"
+                        style={{ fontSize: 11, flexShrink: 0, alignSelf: 'flex-end' }}
+                        onClick={() => generateStepImage(step, prompt)}
+                        disabled={!prompt.trim() || imgState?.loading}
+                        title="Bu kart için görsel üret"
+                      >
+                        {imgState?.loading ? '⏳' : imgState?.url ? '🔄' : '🎨'}
+                      </button>
+                    </div>
+                    {imgState?.error && (
+                      <div style={{ fontSize: 10, color: 'var(--red)' }}>⚠️ {imgState.error}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Publish Section */}
