@@ -323,7 +323,7 @@ function fallbackPreviousLessons(unitId: string, lessonOrder: number): PreviousL
     .flatMap(u => u.lessons.map((lessonHint, index) => ({ unit: u, lessonHint, lessonOrder: index + 1 })))
     .filter(entry => globalLessonOrder(entry.unit.id, entry.lessonOrder) < currentGlobalOrder)
     .sort((a, b) => globalLessonOrder(a.unit.id, a.lessonOrder) - globalLessonOrder(b.unit.id, b.lessonOrder))
-    .slice(-40)
+    .slice(-5)
     .map(({ unit: sourceUnit, lessonHint, lessonOrder: sourceLessonOrder }) => {
       const items = lessonHint.words.map((word): CurriculumMediaItem => {
         const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
@@ -369,6 +369,7 @@ export default function AIGeneratorPage() {
   const [prevContextLoaded, setPrevContextLoaded] = useState(false);
   const [prevContextRefreshKey, setPrevContextRefreshKey] = useState(0);
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>(['', '', '']);
+  const [reviewSearch, setReviewSearch] = useState('');
 
   const [status, setStatus] = useState<'idle' | 'generating' | 'done' | 'error'>('idle');
   const [progress, setProgress] = useState('');
@@ -522,7 +523,7 @@ export default function AIGeneratorPage() {
     for (const ctx of [...chronological].reverse()) {
       const order = ctx.globalLessonOrder ?? globalLessonOrder(ctx.unitId ?? unitId, ctx.lessonOrder);
       seenOrders.add(order);
-      if (seenOrders.size > 40) break;
+      if (seenOrders.size > 5) break;
 
       for (const item of ctx.items ?? []) {
         const key = normalizeKu(item.ku);
@@ -540,9 +541,64 @@ export default function AIGeneratorPage() {
     return candidates;
   })();
 
+  // Tüm önceki derslerden dedup'lı tam liste — arama için limit yok
+  const allPreviousReviewItems: ReviewItemContext[] = (() => {
+    const chronological = [...effectivePrevContext]
+      .sort((a, b) => (a.globalLessonOrder ?? globalLessonOrder(a.unitId ?? unitId, a.lessonOrder)) -
+        (b.globalLessonOrder ?? globalLessonOrder(b.unitId ?? unitId, b.lessonOrder)));
+    const canonicalByKu = new Map<string, ReviewItemContext>();
+    const displayByKu = new Map<string, CurriculumMediaItem>();
+    for (const ctx of chronological) {
+      for (const item of ctx.items ?? []) {
+        const key = normalizeKu(item.ku);
+        if (!key) continue;
+        if (!canonicalByKu.has(key)) {
+          canonicalByKu.set(key, {
+            sourceLessonId: ctx.lessonId ?? '',
+            sourceUnitId: ctx.unitId,
+            sourceUnitOrder: ctx.unitOrder,
+            sourceLessonOrder: ctx.lessonOrder,
+            sourceGlobalLessonOrder: ctx.globalLessonOrder,
+            item,
+            media: ctx.mediaStatus?.[item.id],
+          });
+          displayByKu.set(key, item);
+        } else {
+          const prev = displayByKu.get(key)!;
+          if ((item.emoji && !prev.emoji) || (item.exampleKu && !prev.exampleKu)) displayByKu.set(key, item);
+        }
+      }
+    }
+    const seenKu = new Set<string>();
+    const all: ReviewItemContext[] = [];
+    for (const ctx of [...chronological].reverse()) {
+      for (const item of ctx.items ?? []) {
+        const key = normalizeKu(item.ku);
+        const canonical = canonicalByKu.get(key);
+        if (!key || !canonical || seenKu.has(key)) continue;
+        seenKu.add(key);
+        const displayItem = displayByKu.get(key) ?? canonical.item;
+        all.push({ ...canonical, item: { ...displayItem, id: canonical.item.id } });
+      }
+    }
+    return all;
+  })();
+
+  const searchResults: ReviewItemContext[] = reviewSearch.trim().length > 0
+    ? allPreviousReviewItems.filter(c => {
+        const q = reviewSearch.trim().toLocaleLowerCase('tr-TR');
+        return normalizeKu(c.item.ku).includes(q) ||
+               (c.item.tr ?? '').toLocaleLowerCase('tr-TR').includes(q) ||
+               (c.item.en ?? '').toLocaleLowerCase().includes(q);
+      }).slice(0, 40)
+    : [];
+
   const selectedReviewItems = selectedReviewIds
-    .map(id => reviewCandidates.find(candidate => candidate.item.id === id))
-    .filter((candidate): candidate is ReviewItemContext => Boolean(candidate));
+    .map(id =>
+      reviewCandidates.find(c => c.item.id === id) ??
+      allPreviousReviewItems.find(c => c.item.id === id),
+    )
+    .filter((c): c is ReviewItemContext => Boolean(c));
 
   const newWordList = focusVocab ? focusVocab.split(',').map(s => s.trim()).filter(Boolean) : [];
 
@@ -810,7 +866,7 @@ export default function AIGeneratorPage() {
                 <label className="form-label">
                   Tekrar edilecek 3 kelime
                   <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 4 }}>
-                    (önceki 4 ünitenin kelimeleri — maks 200)
+                    (son 5 ders · arama ile tüm geçmişe eriş)
                   </span>
                 </label>
 
@@ -850,6 +906,73 @@ export default function AIGeneratorPage() {
                         </select>
                       ))}
                     </div>
+
+                    {/* Kelime Arama — tüm geçmiş dersler */}
+                    {prevContextLoaded && allPreviousReviewItems.length > 0 && (
+                      <div style={{ position: 'relative', marginTop: 8 }}>
+                        <input
+                          type="text"
+                          value={reviewSearch}
+                          onChange={e => setReviewSearch(e.target.value)}
+                          placeholder="🔍 Tüm derslerden kelime ara (Kürtçe veya Türkçe)..."
+                          disabled={status === 'generating'}
+                          style={{
+                            width: '100%', boxSizing: 'border-box',
+                            padding: '6px 10px', borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            background: 'var(--bg2)', color: 'var(--text)',
+                            fontSize: 12,
+                          }}
+                        />
+                        {searchResults.length > 0 && (
+                          <div style={{
+                            position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+                            background: 'var(--bg)', border: '1px solid var(--border)',
+                            borderRadius: 8, maxHeight: 260, overflowY: 'auto',
+                            boxShadow: '0 6px 20px rgba(0,0,0,0.25)', marginTop: 3,
+                          }}>
+                            {searchResults.map(c => {
+                              const already = selectedReviewIds.includes(c.item.id);
+                              const isFallback = c.item.meaningGroup === 'fallback_previous';
+                              return (
+                                <div
+                                  key={c.item.id}
+                                  onClick={() => {
+                                    if (already || isFallback) return;
+                                    setSelectedReviewIds(prev => {
+                                      if (prev.includes(c.item.id)) return prev;
+                                      const next = [...prev];
+                                      const free = next.findIndex(id => !id);
+                                      if (free >= 0) next[free] = c.item.id;
+                                      else next[2] = c.item.id;
+                                      return next;
+                                    });
+                                    setReviewSearch('');
+                                  }}
+                                  style={{
+                                    padding: '6px 10px', cursor: already || isFallback ? 'default' : 'pointer',
+                                    opacity: isFallback ? 0.4 : 1,
+                                    display: 'flex', alignItems: 'center', gap: 8, fontSize: 12,
+                                    borderBottom: '1px solid var(--border)',
+                                    background: already ? 'var(--bg3)' : undefined,
+                                  }}
+                                  onMouseEnter={e => { if (!already && !isFallback) (e.currentTarget as HTMLDivElement).style.background = 'var(--bg2)'; }}
+                                  onMouseLeave={e => { if (!already) (e.currentTarget as HTMLDivElement).style.background = already ? 'var(--bg3)' : ''; }}
+                                >
+                                  <span style={{ color: 'var(--text3)', fontSize: 10, minWidth: 44 }}>U{c.sourceUnitOrder}·D{c.sourceLessonOrder}</span>
+                                  <span>{c.item.emoji ?? '📖'}</span>
+                                  <span style={{ fontWeight: 600 }}>{c.item.ku}</span>
+                                  <span style={{ color: 'var(--text3)' }}>—</span>
+                                  <span style={{ color: 'var(--text2)', flex: 1 }}>{c.item.tr}</span>
+                                  {already && <span style={{ color: 'var(--green)', fontSize: 10 }}>✓</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {reviewCandidates.length === 0 ? (
                       <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 6 }}>
                         Önceki ders bulunamadı; müfredat fallback'i de boş. Ders sırasını kontrol et.
