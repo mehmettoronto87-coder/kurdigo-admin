@@ -6,6 +6,8 @@ import {
 import { ref, listAll, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase/config';
 import type { AdminLesson, SceneAsset, AdminUser, LessonStatus, ChangeRecord, ItemMediaStatus, StepMediaItem } from '../types/admin';
+import { logAction } from './auditLog';
+import { trackDelete } from './activityMonitor';
 import type { CurriculumMediaItem } from '../types/curriculum';
 import { normalizeLessonIds } from './lessonAI';
 
@@ -43,6 +45,7 @@ export async function saveLesson(lesson: AdminLesson): Promise<void> {
     ...normalized,
     updatedAt: new Date().toISOString(),
   }) as AdminLesson);
+  logAction('lesson_saved', 'content', { targetId: normalized.id, targetType: 'lesson' });
 }
 
 async function resolveReviewMedia(lessonData: AdminLesson): Promise<Record<string, ItemMediaStatus>> {
@@ -90,6 +93,10 @@ export async function updateLessonStatus(
     updatedAt: now,
     ...(status === 'approved' ? { approvedBy: userId, approvedAt: now } : {}),
     changeHistory: arrayUnion(record),
+  });
+  logAction('lesson_status_changed', 'content', {
+    targetId: lessonId, targetType: 'lesson',
+    details: { status },
   });
 
   // Sync to public collection for mobile app
@@ -155,6 +162,8 @@ export async function deleteLesson(lessonId: string): Promise<void> {
     deleteDoc(doc(db, 'adminLessons', lessonId)),
     deleteDoc(doc(db, 'publicLessons', lessonId)).catch(() => {}),
   ]);
+  trackDelete('lesson');
+  logAction('lesson_deleted', 'content', { targetId: lessonId, targetType: 'lesson', severity: 'warning' });
 }
 
 export async function deleteLessonStorageFiles(lessonId: string): Promise<void> {
@@ -366,6 +375,8 @@ export async function saveAdminUser(user: AdminUser): Promise<void> {
 
 export async function deleteAdminUser(uid: string): Promise<void> {
   await deleteDoc(doc(db, 'adminUsers', uid));
+  trackDelete('adminUser');
+  logAction('admin_user_deleted', 'admin', { targetId: uid, targetType: 'adminUser', severity: 'warning' });
 }
 
 // ========== DASHBOARD STATS ==========

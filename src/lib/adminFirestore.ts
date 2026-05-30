@@ -4,6 +4,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import type { AdminUser, AdminRole, SupportTicket, TicketStatus, TicketPriority, AdminMessage, AdminTask, TaskStatus } from '../types/admin';
+import { logAction } from './auditLog';
+import { trackDelete } from './activityMonitor';
 
 // ─── Ekip Yönetimi ──────────────────────────────────────────────────────────
 
@@ -17,14 +19,17 @@ export async function updateAdminRole(uid: string, role: AdminRole): Promise<voi
   try {
     await updateDoc(doc(db, 'users', uid), { adminRole: role });
   } catch { /* users kaydı olmayabilir */ }
+  logAction('admin_role_changed', 'admin', { targetId: uid, targetType: 'adminUser', details: { newRole: role }, severity: 'warning' });
 }
 
 export async function deactivateAdmin(uid: string): Promise<void> {
   await updateDoc(doc(db, 'adminUsers', uid), { isActive: false });
+  logAction('admin_deactivated', 'admin', { targetId: uid, targetType: 'adminUser', severity: 'warning' });
 }
 
 export async function activateAdmin(uid: string): Promise<void> {
   await updateDoc(doc(db, 'adminUsers', uid), { isActive: true });
+  logAction('admin_activated', 'admin', { targetId: uid, targetType: 'adminUser' });
 }
 
 // KurdîGo hesabı şartı yok — Firebase Auth hesabı yeterli
@@ -73,6 +78,7 @@ export async function inviteAdminByEmail(email: string, role: AdminRole, invited
   };
 
   await setDoc(doc(db, 'adminUsers', docId), adminUser);
+  logAction('admin_invited', 'admin', { targetId: docId, targetType: 'adminUser', details: { email: normalizedEmail, role } });
 }
 
 // ─── Destek Talepleri ────────────────────────────────────────────────────────
@@ -260,6 +266,8 @@ export async function updateSocialPost(id: string, changes: Partial<SocialPost>)
 export async function deleteSocialPost(id: string): Promise<void> {
   const { deleteDoc } = await import('firebase/firestore');
   await deleteDoc(doc(db, 'socialPosts', id));
+  trackDelete('socialPost');
+  logAction('social_post_deleted', 'content', { targetId: id, targetType: 'socialPost', severity: 'warning' });
 }
 
 export async function logPostPerformance(id: string, performance: PostPerformance): Promise<void> {

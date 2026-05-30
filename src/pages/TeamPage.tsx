@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../firebase/config';
 import { useAuth } from '../hooks/useAuth';
 import { getAllAdminUsers, inviteAdminByEmail, updateAdminRole, deactivateAdmin, activateAdmin } from '../lib/adminFirestore';
 import type { AdminUser, AdminRole } from '../types/admin';
@@ -26,6 +28,21 @@ export default function TeamPage() {
   const [inviting, setInviting] = useState(false);
   const [inviteMsg, setInviteMsg] = useState('');
   const [editingUid, setEditingUid] = useState<string | null>(null);
+  const [resetSentUid, setResetSentUid] = useState<string | null>(null);
+  const [resetLoadingUid, setResetLoadingUid] = useState<string | null>(null);
+
+  const handleSendPasswordReset = async (member: AdminUser) => {
+    setResetLoadingUid(member.uid);
+    try {
+      await sendPasswordResetEmail(auth, member.email);
+      setResetSentUid(member.uid);
+      setTimeout(() => setResetSentUid(null), 4000);
+    } catch {
+      // sessizce geç — email geçersizse Firebase zaten hata fırlatır
+    } finally {
+      setResetLoadingUid(null);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -193,28 +210,47 @@ export default function TeamPage() {
 
               {/* Owner butonları */}
               {isOwner && member.uid !== adminUser?.uid && (
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => setEditingUid(editingUid === member.uid ? null : member.uid)}
+                      style={{
+                        flex: 1, padding: '5px 0', borderRadius: 7, fontSize: 12,
+                        border: '1px solid var(--border)', background: 'var(--bg3)',
+                        color: 'var(--text2)', cursor: 'pointer',
+                      }}
+                    >
+                      {editingUid === member.uid ? 'İptal' : '✏️ Rol Değiştir'}
+                    </button>
+                    <button
+                      onClick={() => handleToggleActive(member)}
+                      style={{
+                        flex: 1, padding: '5px 0', borderRadius: 7, fontSize: 12,
+                        border: '1px solid var(--border)',
+                        background: member.isActive ? 'var(--red-dim)' : 'var(--green-dim)',
+                        color: member.isActive ? 'var(--red)' : 'var(--green)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {member.isActive ? '🚫 Devre Dışı' : '✅ Aktif Et'}
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setEditingUid(editingUid === member.uid ? null : member.uid)}
+                    onClick={() => handleSendPasswordReset(member)}
+                    disabled={resetLoadingUid === member.uid || resetSentUid === member.uid}
                     style={{
-                      flex: 1, padding: '5px 0', borderRadius: 7, fontSize: 12,
-                      border: '1px solid var(--border)', background: 'var(--bg3)',
-                      color: 'var(--text2)', cursor: 'pointer',
-                    }}
-                  >
-                    {editingUid === member.uid ? 'İptal' : '✏️ Rol Değiştir'}
-                  </button>
-                  <button
-                    onClick={() => handleToggleActive(member)}
-                    style={{
-                      flex: 1, padding: '5px 0', borderRadius: 7, fontSize: 12,
+                      width: '100%', padding: '5px 0', borderRadius: 7, fontSize: 12,
                       border: '1px solid var(--border)',
-                      background: member.isActive ? 'var(--red-dim)' : 'var(--green-dim)',
-                      color: member.isActive ? 'var(--red)' : 'var(--green)',
-                      cursor: 'pointer',
+                      background: resetSentUid === member.uid ? 'var(--green-dim)' : 'var(--bg3)',
+                      color: resetSentUid === member.uid ? 'var(--green)' : 'var(--text2)',
+                      cursor: resetSentUid === member.uid ? 'default' : 'pointer',
                     }}
                   >
-                    {member.isActive ? '🚫 Devre Dışı' : '✅ Aktif Et'}
+                    {resetLoadingUid === member.uid
+                      ? 'Gönderiliyor...'
+                      : resetSentUid === member.uid
+                        ? '✅ Email gönderildi'
+                        : '📧 Şifre Yenileme Emaili Gönder'}
                   </button>
                 </div>
               )}

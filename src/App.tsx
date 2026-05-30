@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
+import { useInactivityLogout } from './hooks/useInactivityLogout';
 import { ROLE_PANELS } from './types/admin';
 import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
@@ -26,6 +27,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 export default function App() {
   const { user, loading, adminUser, logout } = useAuth();
   const allowed = adminUser ? ROLE_PANELS[adminUser.role] : [];
+  useInactivityLogout(logout, !!user);
 
   if (loading) return <div className="loading" style={{ height: '100vh', fontSize: 16 }}>🐦 KurdîGo Admin yükleniyor...</div>;
 
