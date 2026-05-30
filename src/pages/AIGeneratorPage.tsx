@@ -402,6 +402,7 @@ export default function AIGeneratorPage() {
     const isRefresh = prevContextRefreshKey > 0;
     if (isRefresh) invalidateAllLessonsCache();
     setPrevContextLoaded(false);
+    setPrevContext([]);
     Promise.all([
       getLessonsForUnit(unitId).catch(e => { console.error('[getLessonsForUnit]', e); return [] as AdminLesson[]; }),
       getPublicLessonsForUnit(unitId).catch(e => { console.error('[getPublicLessons]', e); return [] as AdminLesson[]; }),
@@ -604,7 +605,7 @@ export default function AIGeneratorPage() {
   const newWordList = focusVocab ? focusVocab.split(',').map(s => s.trim()).filter(Boolean) : [];
 
   useEffect(() => {
-    if (!needsReview || reviewCandidates.length === 0) return;
+    if (!needsReview || !prevContextLoaded || reviewCandidates.length === 0) return;
     setSelectedReviewIds(prev => {
       const valid = prev.filter(id => reviewCandidates.some(candidate => candidate.item.id === id));
       const fill = reviewCandidates
@@ -615,7 +616,7 @@ export default function AIGeneratorPage() {
       while (next.length < 3) next.push('');
       return next.join('|') === prev.join('|') ? prev : next;
     });
-  }, [unitId, lessonOrder, reviewCandidates.map(candidate => candidate.item.id).join('|')]);
+  }, [unitId, lessonOrder, prevContextLoaded, reviewCandidates.map(candidate => candidate.item.id).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerate = async () => {
     if (!aiProviderReady) {
@@ -919,7 +920,7 @@ export default function AIGeneratorPage() {
                     </div>
 
                     {/* Kelime Arama — tüm geçmiş dersler */}
-                    {prevContextLoaded && allPreviousReviewItems.length > 0 && (
+                    {prevContextLoaded && allPreviousReviewItems.filter(c => c.item.meaningGroup !== 'fallback_previous').length > 0 && (
                       <div style={{ position: 'relative', marginTop: 8 }}>
                         <input
                           type="text"
