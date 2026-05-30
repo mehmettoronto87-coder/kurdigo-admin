@@ -323,7 +323,7 @@ function fallbackPreviousLessons(unitId: string, lessonOrder: number): PreviousL
     .flatMap(u => u.lessons.map((lessonHint, index) => ({ unit: u, lessonHint, lessonOrder: index + 1 })))
     .filter(entry => globalLessonOrder(entry.unit.id, entry.lessonOrder) < currentGlobalOrder)
     .sort((a, b) => globalLessonOrder(a.unit.id, a.lessonOrder) - globalLessonOrder(b.unit.id, b.lessonOrder))
-    .slice(-5)
+    .slice(-10)
     .map(({ unit: sourceUnit, lessonHint, lessonOrder: sourceLessonOrder }) => {
       const items = lessonHint.words.map((word): CurriculumMediaItem => {
         const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
@@ -522,7 +522,7 @@ export default function AIGeneratorPage() {
     for (const ctx of [...chronological].reverse()) {
       const order = ctx.globalLessonOrder ?? globalLessonOrder(ctx.unitId ?? unitId, ctx.lessonOrder);
       seenOrders.add(order);
-      if (seenOrders.size > 5) break;
+      if (seenOrders.size > 10) break;
 
       for (const item of ctx.items ?? []) {
         const key = normalizeKu(item.ku);
