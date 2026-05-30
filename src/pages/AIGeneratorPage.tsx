@@ -323,7 +323,7 @@ function fallbackPreviousLessons(unitId: string, lessonOrder: number): PreviousL
     .flatMap(u => u.lessons.map((lessonHint, index) => ({ unit: u, lessonHint, lessonOrder: index + 1 })))
     .filter(entry => globalLessonOrder(entry.unit.id, entry.lessonOrder) < currentGlobalOrder)
     .sort((a, b) => globalLessonOrder(a.unit.id, a.lessonOrder) - globalLessonOrder(b.unit.id, b.lessonOrder))
-    .slice(-10)
+    .slice(-40)
     .map(({ unit: sourceUnit, lessonHint, lessonOrder: sourceLessonOrder }) => {
       const items = lessonHint.words.map((word): CurriculumMediaItem => {
         const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
@@ -522,7 +522,7 @@ export default function AIGeneratorPage() {
     for (const ctx of [...chronological].reverse()) {
       const order = ctx.globalLessonOrder ?? globalLessonOrder(ctx.unitId ?? unitId, ctx.lessonOrder);
       seenOrders.add(order);
-      if (seenOrders.size > 10) break;
+      if (seenOrders.size > 40) break;
 
       for (const item of ctx.items ?? []) {
         const key = normalizeKu(item.ku);
@@ -810,7 +810,7 @@ export default function AIGeneratorPage() {
                 <label className="form-label">
                   Tekrar edilecek 3 kelime
                   <span style={{ fontWeight: 400, color: 'var(--text3)', marginLeft: 4 }}>
-                    (önceki 3 dersin kelimeleri)
+                    (önceki 4 ünitenin kelimeleri — maks 200)
                   </span>
                 </label>
 
