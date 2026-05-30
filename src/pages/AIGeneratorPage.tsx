@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { generateLesson, validateLesson, completeMissingSection, toCanonicalId } from '../lib/lessonAI';
-import { saveLesson, getLessonsForUnit, getPublicLessonsForUnit, getAllLessons } from '../lib/firestore';
+import { saveLesson, getLessonsForUnit, getPublicLessonsForUnit, getAllLessons, invalidateAllLessonsCache } from '../lib/firestore';
 import { UNITS, LEVELS } from '../lib/curriculumData';
 import { useAuth } from '../hooks/useAuth';
 import { getImageProviderLabel, getTextProviderLabel, hasTextProviderConfig } from '../lib/aiProviders';
@@ -399,8 +399,9 @@ export default function AIGeneratorPage() {
   useEffect(() => {
     // Yükleme başlarken loaded'ı false yap — sadece Firestore'dan gerçek veri gelince true olacak.
     // Başlangıçta fallback göstermiyoruz; Firestore sonucu gelene kadar bekliyoruz.
+    const isRefresh = prevContextRefreshKey > 0;
+    if (isRefresh) invalidateAllLessonsCache();
     setPrevContextLoaded(false);
-    setPrevContext([]);
     Promise.all([
       getLessonsForUnit(unitId).catch(e => { console.error('[getLessonsForUnit]', e); return [] as AdminLesson[]; }),
       getPublicLessonsForUnit(unitId).catch(e => { console.error('[getPublicLessons]', e); return [] as AdminLesson[]; }),
@@ -870,41 +871,51 @@ export default function AIGeneratorPage() {
                   </span>
                 </label>
 
-                {!prevContextLoaded ? (
-                  <div style={{ fontSize: 11, color: 'var(--text3)', padding: '8px 0' }}>
-                    ⏳ Önceki dersler Firestore'dan yükleniyor...
-                  </div>
-                ) : (
-                  <>
+                <>
+                    {!prevContextLoaded && (
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
+                        ⏳ Gerçek ID'ler yükleniyor...
+                      </div>
+                    )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {[0, 1, 2].map(slot => (
-                        <select
-                          key={slot}
-                          value={selectedReviewIds[slot] ?? ''}
-                          onChange={e => {
-                            const next = [...selectedReviewIds];
-                            next[slot] = e.target.value;
-                            setSelectedReviewIds(next);
-                          }}
-                          disabled={status === 'generating' || reviewCandidates.length === 0}
-                        >
-                          <option value="">Tekrar {slot + 1} seç</option>
-                          {reviewCandidates
-                            .filter(candidate =>
-                              candidate.item.id === selectedReviewIds[slot] ||
-                              !selectedReviewIds.includes(candidate.item.id),
-                            )
-                            .map(candidate => {
-                              const isFallback = candidate.item.meaningGroup === 'fallback_previous' ||
-                                candidate.item.visualAffordanceTags?.includes('source:fallback_previous_lesson');
-                              return (
-                                <option key={candidate.item.id} value={candidate.item.id} disabled={isFallback}>
-                                  {isFallback ? '⚠️ SAHTE ID · ' : ''}U{candidate.sourceUnitOrder ?? '?'} D{candidate.sourceLessonOrder} · {candidate.item.emoji ?? ''} {candidate.item.ku} — {candidate.item.tr}
-                                </option>
-                              );
-                            })}
-                        </select>
-                      ))}
+                      {[0, 1, 2].map(slot => {
+                        const selectedId = selectedReviewIds[slot] ?? '';
+                        const inRecent = reviewCandidates.some(c => c.item.id === selectedId);
+                        const searchSelected = selectedId && !inRecent
+                          ? allPreviousReviewItems.find(c => c.item.id === selectedId)
+                          : undefined;
+                        return (
+                          <select
+                            key={slot}
+                            value={selectedId}
+                            onChange={e => {
+                              const next = [...selectedReviewIds];
+                              next[slot] = e.target.value;
+                              setSelectedReviewIds(next);
+                            }}
+                            disabled={status === 'generating'}
+                          >
+                            <option value="">Tekrar {slot + 1} seç</option>
+                            {/* Arama ile seçilmiş eski kelime — son 5 derste değil ama slotta görünür */}
+                            {searchSelected && (
+                              <option value={searchSelected.item.id}>
+                                🔍 U{searchSelected.sourceUnitOrder}·D{searchSelected.sourceLessonOrder} · {searchSelected.item.emoji ?? ''} {searchSelected.item.ku} — {searchSelected.item.tr}
+                              </option>
+                            )}
+                            {reviewCandidates
+                              .filter(c => c.item.id === selectedId || !selectedReviewIds.includes(c.item.id))
+                              .map(c => {
+                                const isFallback = c.item.meaningGroup === 'fallback_previous' ||
+                                  c.item.visualAffordanceTags?.includes('source:fallback_previous_lesson');
+                                return (
+                                  <option key={c.item.id} value={c.item.id} disabled={isFallback}>
+                                    {isFallback ? '⚠️ SAHTE ID · ' : ''}U{c.sourceUnitOrder ?? '?'} D{c.sourceLessonOrder} · {c.item.emoji ?? ''} {c.item.ku} — {c.item.tr}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        );
+                      })}
                     </div>
 
                     {/* Kelime Arama — tüm geçmiş dersler */}
@@ -1036,8 +1047,7 @@ export default function AIGeneratorPage() {
                         ✓ Gerçek ID'ler yüklendi — tekrar kartları orijinal görsel ve sesleriyle eşleşecek.
                       </div>
                     )}
-                  </>
-                )}
+                </>
               </div>
             )}
 

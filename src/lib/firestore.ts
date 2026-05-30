@@ -31,12 +31,21 @@ export async function getPublicLessonsForUnit(unitId: string): Promise<AdminLess
   return snap.docs.map(d => d.data() as AdminLesson).sort((a, b) => a.lessonOrder - b.lessonOrder);
 }
 
-export async function getAllLessons(): Promise<AdminLesson[]> {
+let _allLessonsCache: AdminLesson[] | null = null;
+
+export async function getAllLessons(forceRefresh = false): Promise<AdminLesson[]> {
+  if (!forceRefresh && _allLessonsCache) return _allLessonsCache;
   const snap = await getDocs(collection(db, 'adminLessons'));
-  return snap.docs.map(d => d.data() as AdminLesson);
+  _allLessonsCache = snap.docs.map(d => d.data() as AdminLesson);
+  return _allLessonsCache;
+}
+
+export function invalidateAllLessonsCache(): void {
+  _allLessonsCache = null;
 }
 
 export async function saveLesson(lesson: AdminLesson): Promise<void> {
+  _allLessonsCache = null; // kayıt sonrası cache'i geçersiz kıl
   const normalized = normalizeLessonIds(lesson);
   await syncLessonItemsToSceneLibrary(normalized).catch(err => {
     console.warn('[sceneLibrary sync]', err);
