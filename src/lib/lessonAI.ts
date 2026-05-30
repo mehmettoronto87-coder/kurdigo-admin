@@ -4,6 +4,24 @@ import { UNITS, LEVELS } from './curriculumData';
 import { generateTextJson, getTextProviderLabel } from './aiProviders';
 import { getProjectSettings } from './projectSettings';
 
+export function toCanonicalId(ku: string): string {
+  return ku
+    .trim()
+    .replace(/[?!.,;:'"…«»]/g, '')
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[çÇ]/g, 'c')
+    .replace(/[êÊ]/g, 'e')
+    .replace(/[îÎ]/g, 'i')
+    .replace(/[şŞ]/g, 's')
+    .replace(/[ûÛ]/g, 'u')
+    .replace(/[ğĞ]/g, 'g')
+    .replace(/[ıİ]/g, 'i')
+    .replace(/[öÖ]/g, 'o')
+    .replace(/[üÜ]/g, 'u')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 function unitOrderOf(unitId: string): number {
   return UNITS.find(u => u.id === unitId)?.order ?? 0;
 }
@@ -655,12 +673,13 @@ export async function generateLesson(
     }
 
     // Seçilen tekrar ID'leri previousLessonsContext'te gerçekten var mı?
-    const allPreviousIds = new Set(
-      req.previousLessonsContext?.flatMap(l => (l.items ?? []).map(i => i.id)) ?? [],
-    );
+    const allPreviousIds = new Set([
+      ...(req.previousLessonsContext?.flatMap(l => (l.items ?? []).map(i => i.id)) ?? []),
+      ...(req.previousLessonsContext?.flatMap(l => (l.items ?? []).map(i => toCanonicalId(i.ku))) ?? []),
+    ]);
     const missingIds = req.reviewItems
-      .map(r => r.item.id)
-      .filter(id => allPreviousIds.size > 0 && !allPreviousIds.has(id));
+      .filter(r => allPreviousIds.size > 0 && !allPreviousIds.has(r.item.id) && !allPreviousIds.has(toCanonicalId(r.item.ku)))
+      .map(r => r.item.id);
     if (missingIds.length > 0) {
       throw new Error(
         `Tekrar kelimesi ID'leri önceki derslerde bulunamadı: ${missingIds.join(', ')}. ` +
@@ -727,12 +746,13 @@ export async function generateLesson(
   };
 
   onProgress?.('🔍 Doğrulanıyor...');
-  let result = repairItemRefs(canonicalizeReusedItems(autoRepairLesson(addHistoricalDistractors(mergeSelectedReviewItems(lesson, req), req)), req));
+  const normalized = normalizeLessonIds(lesson);
+  let result = repairItemRefs(canonicalizeReusedItems(autoRepairLesson(addHistoricalDistractors(mergeSelectedReviewItems(normalized, req), req)), req));
 
   const firstValidation = validateLesson(result);
   if (!firstValidation.valid && firstValidation.errors.length > 0) {
     result = await autoFixLesson(result, firstValidation.errors, onProgress);
-    result = repairItemRefs(canonicalizeReusedItems(result, req));
+    result = repairItemRefs(canonicalizeReusedItems(normalizeLessonIds(result), req));
   }
 
   onProgress?.('✅ Taslak hazır!');
@@ -791,9 +811,11 @@ function buildHistoricalCanonicalMap(
     for (const item of ctx.items ?? []) {
       const key = normalizeKu(item.ku);
       if (!key || map.has(key)) continue;
+      const canonicalId = toCanonicalId(item.ku);
+      const canonicalItem = item.id !== canonicalId ? { ...item, id: canonicalId } : item;
       map.set(key, {
-        item,
-        media: ctx.mediaStatus?.[item.id],
+        item: canonicalItem,
+        media: ctx.mediaStatus?.[item.id] ?? ctx.mediaStatus?.[canonicalId],
         globalLessonOrder: order,
         lessonId: ctx.lessonId,
       });
@@ -827,24 +849,23 @@ function remapStepIds(step: CurriculumLessonStep, remap: Map<string, string>): C
   return s as unknown as CurriculumLessonStep;
 }
 
-function canonicalizeReusedItems(lesson: AdminLesson, req: AIGenerationRequest): AdminLesson {
-  const canonicalByKu = buildHistoricalCanonicalMap(req);
-  if (canonicalByKu.size === 0) return lesson;
-
+export function normalizeLessonIds(lesson: AdminLesson): AdminLesson {
   const remap = new Map<string, string>();
   const mediaStatus = { ...(lesson.mediaStatus ?? {}) };
   const itemsById = new Map<string, CurriculumMediaItem>();
 
   for (const item of lesson.items) {
-    const canonical = canonicalByKu.get(normalizeKu(item.ku));
-    if (canonical && canonical.item.id !== item.id) {
-      remap.set(item.id, canonical.item.id);
-      itemsById.set(canonical.item.id, canonical.item);
-      const normalized = normalizeReusedMedia(canonical.media);
-      if (normalized) mediaStatus[canonical.item.id] = normalized;
-      continue;
+    const canonicalId = toCanonicalId(item.ku);
+    if (item.id !== canonicalId) remap.set(item.id, canonicalId);
+    if (!itemsById.has(canonicalId)) {
+      itemsById.set(canonicalId, item.id !== canonicalId ? { ...item, id: canonicalId } : item);
+      if (item.id !== canonicalId) {
+        if (mediaStatus[item.id] !== undefined && mediaStatus[canonicalId] === undefined) {
+          mediaStatus[canonicalId] = mediaStatus[item.id];
+        }
+        delete mediaStatus[item.id];
+      }
     }
-    itemsById.set(item.id, item);
   }
 
   if (remap.size === 0) return lesson;
@@ -853,18 +874,34 @@ function canonicalizeReusedItems(lesson: AdminLesson, req: AIGenerationRequest):
   const remapList = (ids: string[] | undefined) =>
     ids ? Array.from(new Set(ids.map(id => remap.get(id) ?? id))) : ids;
 
-  for (const oldId of Array.from(remap.keys())) {
-    delete mediaStatus[oldId];
-  }
-
   return {
     ...lesson,
     items: Array.from(itemsById.values()),
     steps,
     reviewItemIds: remapList(lesson.reviewItemIds) ?? [],
     externalDistractorItemIds: remapList(lesson.externalDistractorItemIds),
-    mediaStatus: Object.keys(mediaStatus).length ? mediaStatus : lesson.mediaStatus,
+    mediaStatus: Object.keys(mediaStatus).length ? mediaStatus : undefined,
   };
+}
+
+function canonicalizeReusedItems(lesson: AdminLesson, req: AIGenerationRequest): AdminLesson {
+  // IDs are already canonical (normalizeLessonIds ran earlier). This function only copies
+  // approved media from historical items that have been through the media pipeline.
+  const canonicalByKu = buildHistoricalCanonicalMap(req);
+  if (canonicalByKu.size === 0) return lesson;
+
+  const mediaStatus = { ...(lesson.mediaStatus ?? {}) };
+  let changed = false;
+  for (const item of lesson.items) {
+    const canonical = canonicalByKu.get(normalizeKu(item.ku));
+    if (!canonical) continue;
+    const normalized = normalizeReusedMedia(canonical.media);
+    if (normalized && !mediaStatus[item.id]?.imageUrl) {
+      mediaStatus[item.id] = normalized;
+      changed = true;
+    }
+  }
+  return changed ? { ...lesson, mediaStatus } : lesson;
 }
 
 function mergeSelectedReviewItems(lesson: AdminLesson, req: AIGenerationRequest): AdminLesson {
@@ -929,13 +966,20 @@ function shuffleStable<T>(items: T[], seed: string): T[] {
 }
 
 function historicalDistractorPool(req: AIGenerationRequest): { item: CurriculumMediaItem; media?: unknown }[] {
-  const byId = new Map<string, { item: CurriculumMediaItem; media?: unknown }>();
+  const byCanonicalId = new Map<string, { item: CurriculumMediaItem; media?: unknown }>();
   for (const lessonCtx of req.previousLessonsContext ?? []) {
     for (const item of lessonCtx.items ?? []) {
-      byId.set(item.id, { item, media: lessonCtx.mediaStatus?.[item.id] });
+      const canonicalId = toCanonicalId(item.ku);
+      if (!byCanonicalId.has(canonicalId)) {
+        const canonicalItem = item.id !== canonicalId ? { ...item, id: canonicalId } : item;
+        byCanonicalId.set(canonicalId, {
+          item: canonicalItem,
+          media: lessonCtx.mediaStatus?.[item.id] ?? lessonCtx.mediaStatus?.[canonicalId],
+        });
+      }
     }
   }
-  return [...byId.values()];
+  return [...byCanonicalId.values()];
 }
 
 function targetIdForStep(step: CurriculumLessonStep): string | undefined {

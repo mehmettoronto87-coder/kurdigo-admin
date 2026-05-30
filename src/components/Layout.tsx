@@ -51,7 +51,7 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Sistem',
     items: [
-      { path: '/settings', label: 'Ayarlar', icon: '⚙️', panel: 'settings' },
+      { path: '/settings',         label: 'Ayarlar',         icon: '⚙️', panel: 'settings' },
     ],
   },
 ];

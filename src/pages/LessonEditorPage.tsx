@@ -11,7 +11,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { subscribeLessons, saveLesson, updateLessonStatus, deleteLesson, deleteLessonStorageFiles } from '../lib/firestore';
 import ProductionPanel from './ProductionPanel';
-import { validateLesson } from '../lib/lessonAI';
+import { validateLesson, toCanonicalId } from '../lib/lessonAI';
 import { UNITS } from '../lib/curriculumData';
 import { useAuth } from '../hooks/useAuth';
 import type { AdminLesson, LessonStatus, VocabFrequencyEntry, ConflictWarning } from '../types/admin';
@@ -47,22 +47,6 @@ function unitOrderOf(unitId: string): number {
   return UNITS.find(u => u.id === unitId)?.order ?? 0;
 }
 
-function itemSlug(value: string): string {
-  return value
-    .toLocaleLowerCase('tr-TR')
-    .replace(/[çÇ]/g, 'c')
-    .replace(/[êÊ]/g, 'e')
-    .replace(/[îÎ]/g, 'i')
-    .replace(/[şŞ]/g, 's')
-    .replace(/[ûÛ]/g, 'u')
-    .replace(/[ğĞ]/g, 'g')
-    .replace(/[ıİ]/g, 'i')
-    .replace(/[öÖ]/g, 'o')
-    .replace(/[üÜ]/g, 'u')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
 function adjacentUnitDistractorItems(lesson: AdminLesson): CurriculumMediaItem[] {
   const currentOrder = unitOrderOf(lesson.unitId);
   const existingByKu = new Map(lesson.items.map(item => [item.ku.trim().toLocaleLowerCase('tr-TR'), item]));
@@ -70,20 +54,20 @@ function adjacentUnitDistractorItems(lesson: AdminLesson): CurriculumMediaItem[]
 
   return UNITS
     .filter(unit => Math.abs((unit.order ?? 0) - currentOrder) <= 1)
-    .flatMap(unit => unit.lessons.flatMap((lessonHint, lessonIndex) =>
-      lessonHint.words.map((word, wordIndex): CurriculumMediaItem => {
+    .flatMap(unit => unit.lessons.flatMap(lessonHint =>
+      lessonHint.words.map((word): CurriculumMediaItem => {
         const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
         const existing = existingByKu.get(ku.trim().toLocaleLowerCase('tr-TR'));
         if (existing) return existing;
         return {
-          id: `adj_${unit.id}_l${lessonIndex + 1}_${wordIndex + 1}_${itemSlug(word)}`,
+          id: toCanonicalId(ku),
           ku,
           tr: word,
           en: word,
           emoji: '🔀',
           partOfSpeech: 'noun',
           meaningGroup: `adjacent_unit_${unit.id}`,
-          tags: [`word:${itemSlug(word)}`, 'distractor_only', `source:${unit.id}`],
+          tags: ['distractor_only', `source:${unit.id}`],
           visualAffordanceTags: ['source:adjacent_unit_distractor'],
         };
       }),

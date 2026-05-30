@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { generateLesson, validateLesson, completeMissingSection } from '../lib/lessonAI';
+import { generateLesson, validateLesson, completeMissingSection, toCanonicalId } from '../lib/lessonAI';
 import { saveLesson, getLessonsForUnit, getPublicLessonsForUnit, getAllLessons } from '../lib/firestore';
 import { UNITS, LEVELS } from '../lib/curriculumData';
 import { useAuth } from '../hooks/useAuth';
@@ -249,22 +249,6 @@ function selectCanonicalLessons(lessons: AdminLesson[]): AdminLesson[] {
   );
 }
 
-function itemSlug(value: string): string {
-  return value
-    .toLocaleLowerCase('tr-TR')
-    .replace(/[çÇ]/g, 'c')
-    .replace(/[êÊ]/g, 'e')
-    .replace(/[îÎ]/g, 'i')
-    .replace(/[şŞ]/g, 's')
-    .replace(/[ûÛ]/g, 'u')
-    .replace(/[ğĞ]/g, 'g')
-    .replace(/[ıİ]/g, 'i')
-    .replace(/[öÖ]/g, 'o')
-    .replace(/[üÜ]/g, 'u')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
 function normalizeKu(value: string | undefined): string {
   return (value ?? '').trim().toLocaleLowerCase('tr-TR');
 }
@@ -277,19 +261,19 @@ function adjacentUnitDistractorItems(lesson: AdminLesson): CurriculumMediaItem[]
   return UNITS
     .filter(unit => Math.abs((unit.order ?? 0) - currentOrder) <= 1)
     .flatMap(unit => unit.lessons.flatMap((lessonHint, lessonIndex) =>
-      lessonHint.words.map((word, wordIndex): CurriculumMediaItem => {
+      lessonHint.words.map((word): CurriculumMediaItem => {
         const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
         const existing = existingByKu.get(ku.trim().toLocaleLowerCase('tr-TR'));
         if (existing) return existing;
         return {
-          id: `adj_${unit.id}_l${lessonIndex + 1}_${wordIndex + 1}_${itemSlug(word)}`,
+          id: toCanonicalId(ku),
           ku,
           tr: word,
           en: word,
           emoji: '🔀',
           partOfSpeech: 'noun',
           meaningGroup: `adjacent_unit_${unit.id}`,
-          tags: [`word:${itemSlug(word)}`, 'distractor_only', `source:${unit.id}`],
+          tags: ['distractor_only', `source:${unit.id}`],
           visualAffordanceTags: ['source:adjacent_unit_distractor'],
         };
       }),
@@ -339,19 +323,22 @@ function fallbackPreviousLessons(unitId: string, lessonOrder: number): PreviousL
     .flatMap(u => u.lessons.map((lessonHint, index) => ({ unit: u, lessonHint, lessonOrder: index + 1 })))
     .filter(entry => globalLessonOrder(entry.unit.id, entry.lessonOrder) < currentGlobalOrder)
     .sort((a, b) => globalLessonOrder(a.unit.id, a.lessonOrder) - globalLessonOrder(b.unit.id, b.lessonOrder))
-    .slice(-3)
+    .slice(-5)
     .map(({ unit: sourceUnit, lessonHint, lessonOrder: sourceLessonOrder }) => {
-      const items = lessonHint.words.map((word, wordIndex): CurriculumMediaItem => ({
-        id: `${sourceUnit.id}_l${sourceLessonOrder}_${wordIndex + 1}_${itemSlug(word)}`,
-        ku: word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1),
-        tr: word,
-        en: word,
-        emoji: '📖',
-        partOfSpeech: 'expression',
-        meaningGroup: 'fallback_previous',
-        tags: [`word:${word}`],
-        visualAffordanceTags: ['source:fallback_previous_lesson'],
-      }));
+      const items = lessonHint.words.map((word): CurriculumMediaItem => {
+        const ku = word.charAt(0).toLocaleUpperCase('tr-TR') + word.slice(1);
+        return {
+          id: toCanonicalId(ku),
+          ku,
+          tr: word,
+          en: word,
+          emoji: '📖',
+          partOfSpeech: 'expression',
+          meaningGroup: 'fallback_previous',
+          tags: [`word:${word}`],
+          visualAffordanceTags: ['source:fallback_previous_lesson'],
+        };
+      });
       return {
         lessonId: `${sourceUnit.id}_lesson${sourceLessonOrder}_fallback`,
         unitId: sourceUnit.id,
@@ -427,18 +414,27 @@ export default function AIGeneratorPage() {
         })
         .sort((a, b) => globalLessonOrder(a.unitId, a.lessonOrder) - globalLessonOrder(b.unitId, b.lessonOrder));
       const ctx: PreviousLessonContext[] = previousLessons
-        .map(l => ({
-          lessonId: l.id,
-          unitId: l.unitId,
-          unitOrder: unitOrderOf(l.unitId),
-          lessonOrder: l.lessonOrder,
-          globalLessonOrder: globalLessonOrder(l.unitId, l.lessonOrder),
-          title: l.title,
-          itemIds: l.items.map(i => i.id),
-          itemsKu: l.items.map(i => i.ku),
-          items: l.items,
-          mediaStatus: l.mediaStatus,
-        }));
+        .map(l => {
+          // Only include focus vocabulary — exclude external distractors (wrong-answer words)
+          // and review items (words taught in older lessons, already in their own context).
+          const excludeIds = new Set([
+            ...(l.externalDistractorItemIds ?? []),
+            ...(l.reviewItemIds ?? []),
+          ]);
+          const focusItems = l.items.filter(item => !excludeIds.has(item.id));
+          return {
+            lessonId: l.id,
+            unitId: l.unitId,
+            unitOrder: unitOrderOf(l.unitId),
+            lessonOrder: l.lessonOrder,
+            globalLessonOrder: globalLessonOrder(l.unitId, l.lessonOrder),
+            title: l.title,
+            itemIds: focusItems.map(i => i.id),
+            itemsKu: focusItems.map(i => i.ku),
+            items: focusItems,
+            mediaStatus: l.mediaStatus,
+          };
+        });
       // Firestore'dan gerçek ders geldiyse onu kullan, yoksa fallback'e dön.
       setPrevContext(ctx.length ? ctx : fallbackPreviousLessons(unitId, lessonOrder));
       setPrevContextLoaded(true);
@@ -482,42 +478,66 @@ export default function AIGeneratorPage() {
 
   const effectivePrevContext = prevContext.length ? prevContext : fallbackPreviousLessons(unitId, lessonOrder);
 
-  // Global sıraya göre önceki 3 dersin tüm kelimeleri — en yeni ders önce, ID bazında tekrarsız
+  // Önceki 5 dersin tüm kelimeleri — en yeni ders önce, ku bazında tekrarsız
   const reviewCandidates: ReviewItemContext[] = (() => {
     const chronological = [...effectivePrevContext]
       .sort((a, b) => (a.globalLessonOrder ?? globalLessonOrder(a.unitId ?? unitId, a.lessonOrder)) -
         (b.globalLessonOrder ?? globalLessonOrder(b.unitId ?? unitId, b.lessonOrder)));
 
+    // İlk geçen dersteki ID = kanonik ID (AI üretimiyle tutarlı)
     const canonicalByKu = new Map<string, ReviewItemContext>();
+    // En zengin görüntü verisi: emoji/exampleKu olan versiyonu önceliklendir
+    const displayByKu   = new Map<string, CurriculumMediaItem>();
+
     for (const ctx of chronological) {
       for (const item of ctx.items ?? []) {
         const key = normalizeKu(item.ku);
-        if (!key || canonicalByKu.has(key)) continue;
-        canonicalByKu.set(key, {
-          sourceLessonId: ctx.lessonId ?? '',
-          sourceUnitId: ctx.unitId,
-          sourceUnitOrder: ctx.unitOrder,
-          sourceLessonOrder: ctx.lessonOrder,
-          sourceGlobalLessonOrder: ctx.globalLessonOrder,
-          item,
-          media: ctx.mediaStatus?.[item.id],
-        });
+        if (!key) continue;
+        if (!canonicalByKu.has(key)) {
+          canonicalByKu.set(key, {
+            sourceLessonId: ctx.lessonId ?? '',
+            sourceUnitId: ctx.unitId,
+            sourceUnitOrder: ctx.unitOrder,
+            sourceLessonOrder: ctx.lessonOrder,
+            sourceGlobalLessonOrder: ctx.globalLessonOrder,
+            item,
+            media: ctx.mediaStatus?.[item.id],
+          });
+          displayByKu.set(key, item);
+        } else {
+          // Daha zengin görüntü verisi varsa güncelle
+          const prev = displayByKu.get(key)!;
+          if ((item.emoji && !prev.emoji) || (item.exampleKu && !prev.exampleKu)) {
+            displayByKu.set(key, item);
+          }
+        }
       }
     }
 
-    const recentKu = new Set<string>();
-    const recentCandidates: ReviewItemContext[] = [];
+    // Yeniden eskiye doğru listele, en fazla 5 ders
+    const seenKu     = new Set<string>();
+    const candidates: ReviewItemContext[] = [];
+    const seenOrders = new Set<number>();
+
     for (const ctx of [...chronological].reverse()) {
+      const order = ctx.globalLessonOrder ?? globalLessonOrder(ctx.unitId ?? unitId, ctx.lessonOrder);
+      seenOrders.add(order);
+      if (seenOrders.size > 5) break;
+
       for (const item of ctx.items ?? []) {
         const key = normalizeKu(item.ku);
         const canonical = canonicalByKu.get(key);
-        if (!key || !canonical || recentKu.has(key)) continue;
-        recentKu.add(key);
-        recentCandidates.push(canonical);
+        if (!key || !canonical || seenKu.has(key)) continue;
+        seenKu.add(key);
+        // Kanonik ID + en zengin görüntü verisi
+        const displayItem = displayByKu.get(key) ?? canonical.item;
+        candidates.push({
+          ...canonical,
+          item: { ...displayItem, id: canonical.item.id },
+        });
       }
-      if (recentCandidates.length >= 24) break;
     }
-    return recentCandidates;
+    return candidates;
   })();
 
   const selectedReviewItems = selectedReviewIds

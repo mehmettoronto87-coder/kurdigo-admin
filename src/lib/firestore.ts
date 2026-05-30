@@ -7,6 +7,7 @@ import { ref, listAll, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase/config';
 import type { AdminLesson, SceneAsset, AdminUser, LessonStatus, ChangeRecord, ItemMediaStatus, StepMediaItem } from '../types/admin';
 import type { CurriculumMediaItem } from '../types/curriculum';
+import { normalizeLessonIds } from './lessonAI';
 
 // ========== LESSONS ==========
 
@@ -34,11 +35,12 @@ export async function getAllLessons(): Promise<AdminLesson[]> {
 }
 
 export async function saveLesson(lesson: AdminLesson): Promise<void> {
-  await syncLessonItemsToSceneLibrary(lesson).catch(err => {
+  const normalized = normalizeLessonIds(lesson);
+  await syncLessonItemsToSceneLibrary(normalized).catch(err => {
     console.warn('[sceneLibrary sync]', err);
   });
-  await setDoc(doc(db, 'adminLessons', lesson.id), stripUndefined({
-    ...lesson,
+  await setDoc(doc(db, 'adminLessons', normalized.id), stripUndefined({
+    ...normalized,
     updatedAt: new Date().toISOString(),
   }) as AdminLesson);
 }
